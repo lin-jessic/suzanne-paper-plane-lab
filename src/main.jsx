@@ -2,28 +2,64 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { Brain, CheckCircle2, CloudRain, Crosshair, Eye, EyeOff, Gauge, Info, Plane, Rewind, RotateCcw, Scale, Sparkles, Sun, Wind } from 'lucide-react';
+import { Brain, CheckCircle2, CloudRain, Crosshair, Eye, EyeOff, Gauge, Info, Plane, Rewind, RotateCcw, Ruler, Scale, Sparkles, Sun, Wind } from 'lucide-react';
 import './styles.css';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const WORLD_X_SCALE = 1.25;
 const WORLD_Y_SCALE = 1.1;
 const WORLD_Z_SCALE = 1.35;
+const START_HEIGHT = 1.35 * WORLD_Y_SCALE;
+
+const DEFAULT_AIRFRAME = {
+  bodyLength: 100,
+  wingSpan: 100,
+  wingChord: 100,
+  tipLength: 70,
+  leftTipAngle: 8,
+  rightTipAngle: 8
+};
+
+const DEFAULT_PROPELLER = {
+  enabled: false,
+  placement: 'nose',
+  length: 100,
+  weight: 0.8,
+  thrust: 45
+};
 
 const clipMultiplier = placement => placement === 'both' ? 2 : 1;
 const lateralSign = placement => placement === 'left' ? 1 : placement === 'right' ? -1 : 0;
+const propellerLateralSign = placement => placement === 'left' ? 1 : placement === 'right' ? -1 : 0;
 
 function simulateFlight(settings) {
   const { clipCount, clipPosition, clipPlacement, throwAngle, throwPower, wind, windDirection, weather, goal } = settings;
+  const airframe = { ...DEFAULT_AIRFRAME, ...(settings.airframe ?? {}) };
+  const propeller = { ...DEFAULT_PROPELLER, ...(settings.propeller ?? {}) };
+  const lengthFactor = airframe.bodyLength / 100;
+  const spanFactor = airframe.wingSpan / 100;
+  const chordFactor = airframe.wingChord / 100;
+  const wingAreaFactor = spanFactor * chordFactor;
+  const averageTipAngle = (airframe.leftTipAngle + airframe.rightTipAngle) / 2;
+  const tipAsymmetry = (airframe.leftTipAngle - airframe.rightTipAngle) / 18;
+  const tipLengthFactor = airframe.tipLength / 100;
+  const propellerLengthFactor = propeller.length / 100;
+  const propellerWeight = propeller.enabled ? propeller.weight * 0.001 : 0;
+  const propellerThrust = propeller.enabled ? 0.72 * (propeller.thrust / 100) * (0.72 + propellerLengthFactor * 0.28) : 0;
+  const propellerSideWeight = propeller.enabled ? propellerLateralSign(propeller.placement) * clamp(propeller.weight / 1.6, 0, 1) : 0;
+  const propellerCgShift = propeller.enabled
+    ? ({ nose: 3.4, tail: -3.4, left: 0.9, right: 0.9 }[propeller.placement] ?? 0) * clamp(propeller.weight / 1.2, 0.2, 2)
+    : 0;
   const effectiveClipCount = clipCount * clipMultiplier(clipPlacement);
   const sideWeight = lateralSign(clipPlacement);
   const crosswindSign = windDirection === 'left' ? 1 : windDirection === 'right' ? -1 : 0;
   const longitudinalWind = windDirection === 'front' ? wind : 0;
   const crosswind = crosswindSign * Math.abs(wind);
-  const mass = 0.005 + effectiveClipCount * 0.00045;
+  const mass = 0.005 * (0.9 + lengthFactor * 0.1 + wingAreaFactor * 0.08) + effectiveClipCount * 0.00045 + propellerWeight;
   const targetCg = 30;
-  const cg = effectiveClipCount === 0 ? 37 : 37 - effectiveClipCount * (45 - clipPosition) * 0.11;
-  const stability = clamp(1 - Math.abs(cg - targetCg) / 24, 0.35, 1);
+  const cg = (effectiveClipCount === 0 ? 37 : 37 - effectiveClipCount * (45 - clipPosition) * 0.11) - propellerCgShift;
+  const geometryStability = clamp(1 + (lengthFactor - 1) * 0.14 + (averageTipAngle / 18) * 0.14 - Math.abs(tipAsymmetry) * 0.22, 0.72, 1.2);
+  const stability = clamp((1 - Math.abs(cg - targetCg) / 24) * geometryStability, 0.35, 1);
   const noseHeavy = clamp((30 - cg) / 13, -0.75, 0.75);
   const speed0 = 5.8 + throwPower * 0.12;
   const angle = THREE.MathUtils.degToRad(throwAngle);
@@ -35,7 +71,11 @@ function simulateFlight(settings) {
   let vz = 0;
   let t = 0;
   let peak = y;
-  const maxBank = sideWeight * clamp(0.14 + clipCount * 0.065, 0, 0.38);
+  const liftFactor = clamp(0.84 + wingAreaFactor * 0.28 + (averageTipAngle / 18) * 0.08 + tipLengthFactor * 0.08 - (lengthFactor - 1) * 0.08, 0.66, 1.3);
+  const dragFactor = clamp(0.84 + wingAreaFactor * 0.24 + (lengthFactor - 1) * 0.2 + (averageTipAngle / 18) * 0.06 + (tipLengthFactor - 0.7) * 0.08 + (propeller.enabled ? propellerLengthFactor * 0.12 : 0), 0.72, 1.72);
+  const rollDamping = clamp(1.15 - (averageTipAngle / 18) * 0.48, 0.48, 1.2);
+  const lateralLoad = clamp(sideWeight * clamp(0.14 + clipCount * 0.065, 0, 0.38) + propellerSideWeight * 0.12, -0.42, 0.42);
+  const maxBank = (lateralLoad + tipAsymmetry * 0.06) * rollDamping;
   const points = [{ x, y, z, t, roll: 0, lift: 0, drag: 0, speed: speed0, turbulence: 0 }];
 
   while (y > 0 && t < 12) {
@@ -43,8 +83,8 @@ function simulateFlight(settings) {
     const relativeV = Math.max(0.2, vx - longitudinalWind * 0.25);
     const speedRatio = relativeV / speed0;
     const massFactor = clamp(0.00545 / mass, 0.82, 1.08);
-    const lift = 8.65 * speedRatio * speedRatio * stability * massFactor;
-    const drag = 0.025 * relativeV * relativeV * (1 + (1 - stability) * 1.6);
+    const lift = 8.65 * liftFactor * speedRatio * speedRatio * stability * massFactor;
+    const drag = 0.025 * dragFactor * relativeV * relativeV * (1 + (1 - stability) * 1.6);
     const goalLift = goal === 'high' ? 1.04 : 1;
     const gustWave = weather === 'typhoon'
       ? Math.sin(t * 5.1 + 0.7) * 0.56 + Math.sin(t * 11.7 + 1.9) * 0.3 + Math.sin(t * 2.3) * 0.22
@@ -54,9 +94,9 @@ function simulateFlight(settings) {
       + sideWeight * Math.sin(t * 7) * 0.018
       + crosswind * 0.012 * (1 - Math.exp(-t * 1.8))
       + turbulence * 0.085;
-    vx += ((longitudinalWind * 0.3) - drag + turbulence * 0.12) * dt;
+    vx += ((longitudinalWind * 0.3) + propellerThrust - drag + turbulence * 0.12) * dt;
     vy += (lift * goalLift - 9.81 - noseHeavy * 2.5 - vy * 0.12 + turbulence * 1.25) * dt;
-    vz += (Math.sin(roll) * lift * 1.8 + crosswind * 0.46 + turbulence * 2.2 - vz * 0.38) * dt;
+    vz += (Math.sin(roll) * lift * 1.8 + tipAsymmetry * lift * 0.34 + crosswind * 0.46 + turbulence * 2.2 - vz * (0.38 + (averageTipAngle / 18) * 0.12)) * dt;
     x += Math.max(0, vx) * dt;
     y += vy * dt;
     z += vz * dt;
@@ -71,6 +111,9 @@ function simulateFlight(settings) {
   let verdict = '配重接近穩定區，適合進行真實試飛。';
   if (clipCount === 0) verdict = '目前沒有配重，機頭可能抬起後失速。';
   else if (sideWeight !== 0) verdict = `${clipPlacement === 'left' ? '左翼' : '右翼'}較重，飛機會向同側傾斜並偏移約 ${Math.abs(deviation).toFixed(1)} 公尺。`;
+  else if (propeller.enabled && propeller.weight > 1.8) verdict = '螺旋槳偏重，飛機前進較慢，重心也更靠近安裝側。';
+  else if (propeller.enabled && propeller.thrust > 65) verdict = '螺旋槳推進效率較高，前進距離增加，但槳葉阻力也會上升。';
+  else if (Math.abs(tipAsymmetry) > 0.2) verdict = `${tipAsymmetry > 0 ? '左翼' : '右翼'}翼端上翹較高，飛機會產生持續側滾與偏移。`;
   else if (cg < 23) verdict = '機頭偏重，飛機可能很快向下俯衝。';
   else if (cg > 36) verdict = '重心偏後，飛機可能抬頭並左右搖晃。';
   else if (crosswindSign !== 0 && Math.abs(wind) > 2) verdict = `${windDirection === 'left' ? '左側風' : '右側風'}讓落點側偏約 ${Math.abs(deviation).toFixed(1)} 公尺。`;
@@ -88,20 +131,30 @@ function simulateFlight(settings) {
     events.push({ progress: 0.58, label: '側風推動', detail: `飛機向${crosswindSign > 0 ? '左' : '右'}側偏移`, tone: 'wind' });
   }
   if (stability < 0.72) events.push({ progress: 0.38, label: '重心不穩', detail: '機身開始明顯搖擺', tone: 'warning' });
+  if (Math.abs(tipAsymmetry) > 0.2) events.push({ progress: 0.48, label: '翼端不對稱', detail: '左右上翹角度造成側滾', tone: 'warning' });
+  if (propeller.enabled && propeller.thrust > 65) events.push({ progress: 0.3, label: '螺旋槳推進', detail: `額外前進推力 ${(propellerThrust * 100).toFixed(0)}%`, tone: 'peak' });
   events.sort((a, b) => a.progress - b.progress);
 
   return { points, distance, peak, airtime, deviation, cg, stability, verdict, events };
 }
 
 function getCg(settings) {
-  if (settings.clipCount === 0) return 37;
-  return 37 - settings.clipCount * clipMultiplier(settings.clipPlacement) * (45 - settings.clipPosition) * 0.11;
+  const airframe = { ...DEFAULT_AIRFRAME, ...(settings.airframe ?? {}) };
+  const propeller = { ...DEFAULT_PROPELLER, ...(settings.propeller ?? {}) };
+  const lengthBias = (airframe.bodyLength - 100) * 0.025;
+  const propellerCgShift = propeller.enabled
+    ? ({ nose: 3.4, tail: -3.4, left: 0.9, right: 0.9 }[propeller.placement] ?? 0) * clamp(propeller.weight / 1.2, 0.2, 2)
+    : 0;
+  const clipCg = settings.clipCount === 0
+    ? 37
+    : 37 - settings.clipCount * clipMultiplier(settings.clipPlacement) * (45 - settings.clipPosition) * 0.11;
+  return clipCg - lengthBias - propellerCgShift;
 }
 
-function makePlane() {
+function makePlane(airframe = DEFAULT_AIRFRAME) {
   const group = new THREE.Group();
   const paper = new THREE.MeshStandardMaterial({ color: '#f8fbf8', roughness: 0.72, side: THREE.DoubleSide });
-  const fold = new THREE.LineBasicMaterial({ color: '#92aaa1', transparent: true, opacity: 0.5 });
+  const creaseMaterial = new THREE.LineBasicMaterial({ color: '#92aaa1', transparent: true, opacity: 0.5 });
   const makeWing = (side) => {
     const shape = new THREE.Shape();
     shape.moveTo(0, 0);
@@ -112,7 +165,12 @@ function makePlane() {
     shape.closePath();
     const geo = new THREE.ShapeGeometry(shape);
     const mesh = new THREE.Mesh(geo, paper);
-    return mesh;
+    mesh.userData.isAirframeWing = true;
+    mesh.userData.side = side;
+    const wing = new THREE.Group();
+    wing.add(mesh);
+
+    return wing;
   };
   group.add(makeWing(1), makeWing(-1));
 
@@ -120,6 +178,7 @@ function makePlane() {
     new THREE.Vector3(-4.5, 0, 0), new THREE.Vector3(5.35, 0, 0), new THREE.Vector3(-2.2, 0, -0.55), new THREE.Vector3(-4.5, 0, 0)
   ]);
   const keel = new THREE.Mesh(keelGeo, new THREE.MeshStandardMaterial({ color: '#dce9e3', side: THREE.DoubleSide }));
+  keel.userData.isAirframeKeel = true;
   keel.rotation.x = Math.PI / 2;
   group.add(keel);
 
@@ -127,13 +186,71 @@ function makePlane() {
     const crease = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(-3.9, side * 1.15, 0.02), new THREE.Vector3(4.95, side * 0.45, 0.02)
     ]);
-    group.add(new THREE.Line(crease, fold));
+    const creaseLine = new THREE.Line(crease, creaseMaterial);
+    creaseLine.userData.isAirframeCrease = true;
+    group.add(creaseLine);
   });
   group.rotation.x = -Math.PI / 2;
   const carrier = new THREE.Group();
   carrier.add(group);
   carrier.userData.paperModel = group;
+  carrier.userData.applyAirframe = nextAirframe => {
+    const next = { ...DEFAULT_AIRFRAME, ...(nextAirframe ?? {}) };
+    const lengthScale = next.bodyLength / 100;
+    const spanScale = next.wingSpan / 100;
+    const chordScale = next.wingChord / 100;
+    const tipExtent = 0.55 + (next.tipLength / 100) * 0.45;
+    group.traverse(object => {
+      if (object.userData.isAirframeWing) {
+        object.scale.set(lengthScale * chordScale, spanScale, 1);
+        const tipAngle = object.userData.side === 1 ? next.leftTipAngle : next.rightTipAngle;
+        object.rotation.x = object.userData.side * THREE.MathUtils.degToRad(tipAngle) * tipExtent;
+      }
+      if (object.userData.isAirframeKeel) object.scale.set(lengthScale, 1, 1);
+      if (object.userData.isAirframeCrease) object.scale.set(lengthScale * chordScale, spanScale, 1);
+    });
+    group.userData.airframe = next;
+  };
+  carrier.userData.applyAirframe(airframe);
   return carrier;
+}
+
+function makePropeller(propeller = DEFAULT_PROPELLER, airframe = DEFAULT_AIRFRAME) {
+  const propellerGroup = new THREE.Group();
+  const rotor = new THREE.Group();
+  const hubMaterial = new THREE.MeshStandardMaterial({ color: '#2f6757', metalness: 0.35, roughness: 0.38 });
+  const bladeMaterial = new THREE.MeshStandardMaterial({ color: '#e34e38', roughness: 0.55, side: THREE.DoubleSide });
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.3, 14), hubMaterial);
+  hub.rotation.z = Math.PI / 2;
+  rotor.add(hub);
+  for (let index = 0; index < 3; index += 1) {
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.65, 0.18), bladeMaterial);
+    blade.position.y = 0.82;
+    blade.rotation.z = index * (Math.PI * 2 / 3);
+    blade.castShadow = true;
+    rotor.add(blade);
+  }
+  rotor.traverse(object => { if (object.isMesh) object.castShadow = true; });
+  propellerGroup.add(rotor);
+  propellerGroup.userData.rotor = rotor;
+  propellerGroup.userData.applyPropeller = (nextPropeller, nextAirframe) => {
+    const next = { ...DEFAULT_PROPELLER, ...(nextPropeller ?? {}) };
+    const frame = { ...DEFAULT_AIRFRAME, ...(nextAirframe ?? {}) };
+    const spanScale = frame.wingSpan / 100;
+    const position = {
+      nose: [5.55, 0.08, 0],
+      tail: [-4.7, 0.08, 0],
+      left: [1.1, 0.08, 2.2 * spanScale],
+      right: [1.1, 0.08, -2.2 * spanScale]
+    }[next.placement] ?? [5.55, 0.08, 0];
+    propellerGroup.visible = next.enabled;
+    propellerGroup.position.set(...position);
+    rotor.scale.setScalar(0.42 * (next.length / 100));
+    propellerGroup.userData.spinRate = next.enabled ? 10 + next.thrust * 0.12 : 0;
+    propellerGroup.userData.config = next;
+  };
+  propellerGroup.userData.applyPropeller(propeller, airframe);
+  return propellerGroup;
 }
 
 function makeClip() {
@@ -222,8 +339,8 @@ function makeDistanceMarker(distance) {
 
 function makeGrassTexture(renderer) {
   const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
+  canvas.width = 512;
+  canvas.height = 512;
   const context = canvas.getContext('2d');
   context.fillStyle = '#7fb373';
   context.fillRect(0, 0, canvas.width, canvas.height);
@@ -233,14 +350,14 @@ function makeGrassTexture(renderer) {
     return seed / 4294967296;
   };
   const patchColors = ['#73a969', '#8cbd7d', '#679b60', '#95c687'];
-  for (let index = 0; index < 1100; index += 1) {
+  for (let index = 0; index < 2200; index += 1) {
     context.fillStyle = patchColors[Math.floor(random() * patchColors.length)];
     const size = 1 + random() * 2.4;
     context.fillRect(random() * 256, random() * 256, size, size);
   }
   const bladeColors = ['#4f8950', '#5f9858', '#a4cd8f'];
   context.lineWidth = 0.7;
-  for (let index = 0; index < 850; index += 1) {
+  for (let index = 0; index < 1700; index += 1) {
     const x = random() * 256;
     const y = random() * 256;
     context.strokeStyle = bladeColors[Math.floor(random() * bladeColors.length)];
@@ -254,7 +371,7 @@ function makeGrassTexture(renderer) {
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(32, 14);
-  texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+  texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   return texture;
 }
 
@@ -464,7 +581,7 @@ function makeEnvironment() {
   return environment;
 }
 
-function FlightScene({ settings, flightRequest, replayResult, onResult, onFlightState, onFlightEvent, showForces, cameraMode }) {
+function FlightScene({ settings, flightRequest, replayResult, onResult, onFlightComplete, onFlightState, onFlightEvent, showForces, cameraMode }) {
   const host = useRef(null);
   const sceneRef = useRef(null);
   const cameraModeRef = useRef(cameraMode);
@@ -477,9 +594,16 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
     const camera = new THREE.PerspectiveCamera(42, el.clientWidth / el.clientHeight, 0.1, 180);
     camera.position.set(14, 9, 17);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(el.clientWidth < 760 ? 1 : Math.min(window.devicePixelRatio, 1.5));
+    const getRenderPixelRatio = () => {
+      const deviceRatio = window.devicePixelRatio || 1;
+      return el.clientWidth < 760
+        ? Math.min(deviceRatio, 1.5)
+        : Math.min(Math.max(deviceRatio, 1.25), 2);
+    };
+    renderer.setPixelRatio(getRenderPixelRatio());
     renderer.setSize(el.clientWidth, el.clientHeight);
     renderer.shadowMap.enabled = el.clientWidth >= 760;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     el.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -494,6 +618,13 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
     const sun = new THREE.DirectionalLight('#fff6d6', 3.2);
     sun.position.set(-8, 14, 8);
     sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 0.5;
+    sun.shadow.camera.far = 90;
+    sun.shadow.camera.left = -42;
+    sun.shadow.camera.right = 42;
+    sun.shadow.camera.top = 32;
+    sun.shadow.camera.bottom = -22;
     scene.add(sun);
 
     const ground = new THREE.Mesh(
@@ -516,11 +647,13 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
     const trees = [];
     environment.traverse(object => { if (object.userData.isTree) trees.push(object); });
 
-    const plane = makePlane();
+    const plane = makePlane(settings.airframe);
     plane.scale.setScalar(0.3);
-    plane.position.set(0, 1.35 * WORLD_Y_SCALE, 0);
+    plane.position.set(0, START_HEIGHT, 0);
     plane.traverse(obj => { if (obj.isMesh) obj.castShadow = true; });
     scene.add(plane);
+    const propeller = makePropeller(settings.propeller, settings.airframe);
+    plane.add(propeller);
 
     const clips = new THREE.Group();
     plane.userData.paperModel.add(clips);
@@ -548,6 +681,7 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
     scene.add(rainStreaks);
     sceneRef.current = {
       scene, camera, renderer, controls, plane, clips, pathLine, pathMaterial,
+      propeller,
       previousPathLine, previousPathMaterial, forceGroup, forceArrows,
       windStreaks, rainStreaks, windSpeed: 0, windDirection: 'front', weather: 'clear',
       hemisphere, sun, ground, trees,
@@ -558,6 +692,7 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
     const resize = () => {
       camera.aspect = el.clientWidth / el.clientHeight;
       camera.updateProjectionMatrix();
+      renderer.setPixelRatio(getRenderPixelRatio());
       renderer.setSize(el.clientWidth, el.clientHeight);
     };
     const observer = new ResizeObserver(resize);
@@ -593,6 +728,9 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
         controls.target.lerp(sceneRef.current.targetGoal, 0.075);
       }
       controls.update();
+      if (state.propeller.visible && state.propeller.userData.rotor) {
+        state.propeller.userData.rotor.rotation.x += state.propeller.userData.spinRate * delta;
+      }
       renderer.render(scene, camera);
       sceneRef.current.raf = requestAnimationFrame(animate);
     };
@@ -654,11 +792,24 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
   }, [settings.weather]);
 
   useEffect(() => {
+    if (!sceneRef.current || sceneRef.current.isFlying) return;
+    sceneRef.current.plane.userData.applyAirframe(settings.airframe);
+  }, [settings.airframe, settings.airframe?.bodyLength, settings.airframe?.wingSpan, settings.airframe?.wingChord, settings.airframe?.tipLength, settings.airframe?.leftTipAngle, settings.airframe?.rightTipAngle]);
+
+  useEffect(() => {
+    if (!sceneRef.current || sceneRef.current.isFlying) return;
+    sceneRef.current.propeller.userData.applyPropeller(settings.propeller, settings.airframe);
+  }, [settings.propeller, settings.propeller?.enabled, settings.propeller?.placement, settings.propeller?.length, settings.propeller?.weight, settings.propeller?.thrust, settings.airframe?.wingSpan]);
+
+  useEffect(() => {
     if (!sceneRef.current) return;
     const { clips } = sceneRef.current;
     clips.clear();
-    const x = 4.9 - (settings.clipPosition / 100) * 9.4;
-    const wingOffset = clamp(0.65 + (4.9 - x) * 0.35, 0.65, 3.4);
+    const airframe = { ...DEFAULT_AIRFRAME, ...(settings.airframe ?? {}) };
+    const lengthScale = airframe.bodyLength / 100;
+    const spanScale = airframe.wingSpan / 100;
+    const x = (4.9 - (settings.clipPosition / 100) * 9.4) * lengthScale;
+    const wingOffset = clamp((0.65 + (4.9 - x) * 0.35) * spanScale, 0.65, 3.8);
     const sides = settings.clipPlacement === 'both'
       ? [1, -1]
       : settings.clipPlacement === 'left'
@@ -675,10 +826,36 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
         clips.add(clip);
       }
     });
-  }, [settings.clipCount, settings.clipPosition, settings.clipPlacement]);
+  }, [settings.clipCount, settings.clipPosition, settings.clipPlacement, settings.airframe?.bodyLength, settings.airframe?.wingSpan]);
 
   useEffect(() => {
     if (!sceneRef.current || flightRequest.id === 0) return;
+    if (flightRequest.mode === 'return') {
+      const state = sceneRef.current;
+      cancelAnimationFrame(state.flightRaf);
+      state.isFlying = false;
+      state.forceGroup.visible = false;
+      state.plane.position.set(0, START_HEIGHT, 0);
+      state.plane.rotation.set(0, 0, 0);
+      state.plane.userData.paperModel.rotation.set(-Math.PI / 2, 0, 0);
+      state.pathLine.geometry.setDrawRange(0, 0);
+      state.pathMaterial.opacity = 0;
+      state.previousPathMaterial.opacity = 0;
+      state.controls.enabled = cameraModeRef.current === 'overview';
+      if (cameraModeRef.current === 'side') {
+        state.cameraGoal.set(7, 6.5, 22);
+        state.targetGoal.set(4, 2, 0);
+      } else if (cameraModeRef.current === 'follow') {
+        state.cameraGoal.set(-4, 4.2, 8);
+        state.targetGoal.set(2, 1.5, 0);
+      } else {
+        state.cameraGoal.set(11, 11, 22);
+        state.targetGoal.set(6, 1.8, 0);
+      }
+      onFlightState(false);
+      onFlightEvent(null);
+      return;
+    }
     const isReplay = flightRequest.mode === 'replay' && Boolean(replayResult);
     const result = isReplay ? replayResult : simulateFlight(settings);
     onFlightState(true);
@@ -773,6 +950,7 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
         forceGroup.visible = false;
         controls.enabled = cameraModeRef.current === 'overview';
         if (!isReplay) onResult(result);
+        onFlightComplete();
         onFlightState(false);
         onFlightEvent(null);
       }
@@ -792,17 +970,17 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
   return <div className="scene" ref={host} aria-label="Suzanne 紙飛機 3D 飛行模擬畫面" />;
 }
 
-function Slider({ label, value, min, max, step = 1, unit, onChange }) {
+function Slider({ label, value, min, max, step = 1, unit, onChange, disabled = false }) {
   return (
     <label className="slider-row">
       <span>{label}<strong>{value}{unit}</strong></span>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(Number(e.target.value))} />
+      <input type="range" min={min} max={max} step={step} value={value} disabled={disabled} onChange={e => onChange(Number(e.target.value))} />
     </label>
   );
 }
 
 function App() {
-  const [settings, setSettings] = useState({ goal: 'far', clipCount: 1, clipPosition: 22, clipPlacement: 'body', throwAngle: 10, throwPower: 55, wind: 0, windDirection: 'front', weather: 'clear' });
+  const [settings, setSettings] = useState({ goal: 'far', clipCount: 1, clipPosition: 22, clipPlacement: 'body', throwAngle: 10, throwPower: 55, wind: 0, windDirection: 'front', weather: 'clear', airframe: { ...DEFAULT_AIRFRAME }, propeller: { ...DEFAULT_PROPELLER } });
   const [flightRequest, setFlightRequest] = useState({ id: 0, mode: 'launch' });
   const [result, setResult] = useState(null);
   const [previousResult, setPreviousResult] = useState(null);
@@ -812,8 +990,19 @@ function App() {
   const [cameraMode, setCameraMode] = useState('side');
   const [isAnimating, setIsAnimating] = useState(false);
   const [flightEvent, setFlightEvent] = useState(null);
+  const [returnPrompt, setReturnPrompt] = useState(false);
   const update = (key, value) => {
     setSettings(current => ({ ...current, [key]: value }));
+    setPrediction(null);
+    setPredictionFeedback(null);
+  };
+  const updateAirframe = (key, value) => {
+    setSettings(current => ({ ...current, airframe: { ...current.airframe, [key]: value } }));
+    setPrediction(null);
+    setPredictionFeedback(null);
+  };
+  const updatePropeller = (key, value) => {
+    setSettings(current => ({ ...current, propeller: { ...current.propeller, [key]: value } }));
     setPrediction(null);
     setPredictionFeedback(null);
   };
@@ -841,6 +1030,8 @@ function App() {
     setResult(next);
   };
 
+  const handleFlightComplete = () => setReturnPrompt(true);
+
   const launch = () => {
     if (isAnimating || (result && !prediction)) return;
     setFlightRequest(current => ({ id: current.id + 1, mode: 'launch' }));
@@ -849,6 +1040,15 @@ function App() {
   const replay = () => {
     if (isAnimating || !result) return;
     setFlightRequest(current => ({ id: current.id + 1, mode: 'replay' }));
+  };
+
+  const returnToStart = () => {
+    if (isAnimating) return;
+    setReturnPrompt(false);
+    setPrediction(null);
+    setPredictionFeedback(null);
+    setFlightEvent(null);
+    setFlightRequest(current => ({ id: current.id + 1, mode: 'return' }));
   };
 
   const setWindDirection = windDirection => {
@@ -877,8 +1077,20 @@ function App() {
     update('clipPosition', Math.round(position));
   };
 
+  const resetAirframe = () => {
+    setSettings(current => ({ ...current, airframe: { ...DEFAULT_AIRFRAME } }));
+    setPrediction(null);
+    setPredictionFeedback(null);
+  };
+
+  const resetPropeller = () => {
+    setSettings(current => ({ ...current, propeller: { ...DEFAULT_PROPELLER } }));
+    setPrediction(null);
+    setPredictionFeedback(null);
+  };
+
   const reset = () => {
-    setSettings({ goal: 'far', clipCount: 1, clipPosition: 22, clipPlacement: 'body', throwAngle: 10, throwPower: 55, wind: 0, windDirection: 'front', weather: 'clear' });
+    setSettings({ goal: 'far', clipCount: 1, clipPosition: 22, clipPlacement: 'body', throwAngle: 10, throwPower: 55, wind: 0, windDirection: 'front', weather: 'clear', airframe: { ...DEFAULT_AIRFRAME }, propeller: { ...DEFAULT_PROPELLER } });
     setResult(null);
     setPreviousResult(null);
     setPrediction(null);
@@ -887,11 +1099,12 @@ function App() {
     setIsAnimating(false);
     setFlightRequest({ id: 0, mode: 'launch' });
     setFlightEvent(null);
+    setReturnPrompt(false);
   };
 
   return (
     <main className="app-shell">
-      <FlightScene settings={settings} flightRequest={flightRequest} replayResult={result} onResult={handleResult} onFlightState={setIsAnimating} onFlightEvent={setFlightEvent} showForces={showForces} cameraMode={cameraMode} />
+      <FlightScene settings={settings} flightRequest={flightRequest} replayResult={result} onResult={handleResult} onFlightComplete={handleFlightComplete} onFlightState={setIsAnimating} onFlightEvent={setFlightEvent} showForces={showForces} cameraMode={cameraMode} />
       <header className="topbar">
         <div className="brand"><Plane size={22} /><span>Suzanne <b>飛行實驗室</b></span></div>
         <div className="record">世界紀錄機型 · 教學模擬</div>
@@ -926,6 +1139,42 @@ function App() {
           <button className={settings.goal === 'far' ? 'active' : ''} onClick={() => update('goal', 'far')}><Crosshair size={16} />飛更遠</button>
           <button className={settings.goal === 'high' ? 'active' : ''} onClick={() => update('goal', 'high')}><Sparkles size={16} />飛更高</button>
         </div>
+
+        <section className="airframe-section">
+          <div className="section-heading-row"><h2><Ruler size={15} />機型調整</h2><button className="mini-reset" type="button" onClick={resetAirframe}>恢復預設</button></div>
+          <p className="section-note">調整紙飛機尺寸與翼端折角；參數會同時影響 3D 模型、升力、阻力、穩定度與落點。</p>
+          <Slider label="機身長度" value={settings.airframe.bodyLength} min={75} max={125} unit="%" onChange={v => updateAirframe('bodyLength', v)} />
+          <Slider label="翼展長度" value={settings.airframe.wingSpan} min={70} max={140} unit="%" onChange={v => updateAirframe('wingSpan', v)} />
+          <Slider label="翼面寬度" value={settings.airframe.wingChord} min={70} max={130} unit="%" onChange={v => updateAirframe('wingChord', v)} />
+          <Slider label="翼端上翹程度" value={settings.airframe.tipLength} min={35} max={100} unit="%" onChange={v => updateAirframe('tipLength', v)} />
+          <div className="dual-slider-heading"><span>左右翼端上翹角度</span><small>分開控制平衡</small></div>
+          <Slider label="左翼" value={settings.airframe.leftTipAngle} min={0} max={18} unit="°" onChange={v => updateAirframe('leftTipAngle', v)} />
+          <Slider label="右翼" value={settings.airframe.rightTipAngle} min={0} max={18} unit="°" onChange={v => updateAirframe('rightTipAngle', v)} />
+          <div className={`airframe-balance ${Math.abs(settings.airframe.leftTipAngle - settings.airframe.rightTipAngle) > 3 ? 'warning' : ''}`}>
+            <span>翼端平衡</span><strong>{Math.abs(settings.airframe.leftTipAngle - settings.airframe.rightTipAngle) > 3 ? '不對稱，會側滾' : '左右對稱'}</strong>
+          </div>
+        </section>
+
+        <section className={`propeller-section ${settings.propeller.enabled ? '' : 'is-disabled'}`}>
+          <div className="section-heading-row"><h2><RotateCcw size={15} />螺旋槳調整</h2><button className="mini-reset" type="button" onClick={resetPropeller}>恢復預設</button></div>
+          <p className="section-note">可選擇安裝位置、槳葉長度與重量；啟用後會同步影響模型、重心、阻力與前進推力。</p>
+          <div className="propeller-toggle"><span>安裝螺旋槳</span><button type="button" className={settings.propeller.enabled ? 'selected' : ''} onClick={() => updatePropeller('enabled', !settings.propeller.enabled)}>{settings.propeller.enabled ? '已安裝' : '未安裝'}</button></div>
+          <div className="propeller-controls">
+            <div className="propeller-label">安裝位置</div>
+            <div className="placement-options propeller-placement-options" aria-label="螺旋槳安裝位置">
+              {[
+                ['nose', '機頭'],
+                ['left', '左翼'],
+                ['right', '右翼'],
+                ['tail', '機尾']
+              ].map(([placement, label]) => <button key={placement} type="button" disabled={!settings.propeller.enabled} className={settings.propeller.placement === placement ? 'selected' : ''} onClick={() => updatePropeller('placement', placement)}>{label}</button>)}
+            </div>
+            <Slider label="螺旋槳長度" value={settings.propeller.length} min={60} max={140} unit="%" onChange={v => updatePropeller('length', v)} disabled={!settings.propeller.enabled} />
+            <Slider label="螺旋槳重量" value={settings.propeller.weight.toFixed(1)} min={0.2} max={3} step={0.1} unit=" g" onChange={v => updatePropeller('weight', v)} disabled={!settings.propeller.enabled} />
+            <Slider label="推進效率" value={settings.propeller.thrust} min={0} max={100} unit="%" onChange={v => updatePropeller('thrust', v)} disabled={!settings.propeller.enabled} />
+          </div>
+          <div className="propeller-status">{settings.propeller.enabled ? `目前裝在${({ nose: '機頭', left: '左翼', right: '右翼', tail: '機尾' })[settings.propeller.placement]}，重量 ${settings.propeller.weight.toFixed(1)} g` : '未安裝時不會改變原本的飛行結果'}</div>
+        </section>
 
         <section>
           <h2>迴紋針配重</h2>
@@ -1008,6 +1257,11 @@ function App() {
           </div>
           {predictionFeedback && <p className="prediction-feedback"><CheckCircle2 size={15} />{predictionFeedback}</p>}
         </section>}
+
+        {returnPrompt && result && !isAnimating && <div className="return-prompt" role="dialog" aria-label="試飛完成">
+          <p>試飛完成，要回到起點繼續調整飛機造型嗎？</p>
+          <button type="button" onClick={returnToStart}><RotateCcw size={16} />回到起點繼續調整</button>
+        </div>}
 
         <div className="flight-actions">
           <button className="launch" disabled={isAnimating || Boolean(result && !prediction)} onClick={launch}><Plane size={20} />{isAnimating ? '飛行中…' : result && !prediction ? '請先選擇預測' : result ? '再次試飛' : '建立基準試飛'}</button>
