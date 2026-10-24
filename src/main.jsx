@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { Brain, CheckCircle2, CloudRain, Crosshair, Eye, EyeOff, Gauge, Info, Plane, Rewind, RotateCcw, Ruler, Scale, Sparkles, Sun, Wind } from 'lucide-react';
+import { Brain, CheckCircle2, CloudRain, Crosshair, Eye, EyeOff, Gauge, Info, Lock, Plane, Rewind, RotateCcw, Ruler, Scale, Sparkles, Sun, Unlock, Wind } from 'lucide-react';
 import './styles.css';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -581,10 +581,11 @@ function makeEnvironment() {
   return environment;
 }
 
-function FlightScene({ settings, flightRequest, replayResult, onResult, onFlightComplete, onFlightState, onFlightEvent, showForces, cameraMode }) {
+function FlightScene({ settings, flightRequest, replayResult, onResult, onFlightComplete, onFlightState, onFlightEvent, showForces, cameraMode, cameraLocked, cameraResetRequest }) {
   const host = useRef(null);
   const sceneRef = useRef(null);
   const cameraModeRef = useRef(cameraMode);
+  const cameraLockedRef = useRef(cameraLocked);
 
   useEffect(() => {
     const el = host.current;
@@ -723,7 +724,9 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
         const sway = windLean + Math.sin(now * 0.004 + tree.userData.swayPhase + index) * swayStrength;
         tree.rotation.z = THREE.MathUtils.lerp(tree.rotation.z, sway, 0.08);
       });
-      if (sceneRef.current.cameraGoal) {
+      // In overview mode the user owns the camera. Leave it untouched so
+      // OrbitControls can rotate freely without snapping back.
+      if (sceneRef.current.cameraGoal && cameraModeRef.current !== 'overview') {
         camera.position.lerp(sceneRef.current.cameraGoal, 0.075);
         controls.target.lerp(sceneRef.current.targetGoal, 0.075);
       }
@@ -747,9 +750,10 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
 
   useEffect(() => {
     cameraModeRef.current = cameraMode;
-    if (!sceneRef.current || sceneRef.current.isFlying) return;
+    if (!sceneRef.current) return;
     const { cameraGoal, targetGoal, controls } = sceneRef.current;
-    controls.enabled = cameraMode === 'overview';
+    controls.enabled = cameraMode === 'overview' && !cameraLockedRef.current;
+    if (sceneRef.current.isFlying) return;
     if (cameraMode === 'side') {
       cameraGoal.set(7, 6.5, 22);
       targetGoal.set(4, 2, 0);
@@ -759,8 +763,40 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
     } else {
       cameraGoal.set(11, 11, 22);
       targetGoal.set(6, 1.8, 0);
+      // Entering overview establishes its starting composition once. After
+      // that, the controls retain every manual rotation and zoom.
+      if (!sceneRef.current.isFlying) {
+        sceneRef.current.camera.position.copy(cameraGoal);
+        controls.target.copy(targetGoal);
+        controls.update();
+      }
     }
   }, [cameraMode]);
+
+  useEffect(() => {
+    cameraLockedRef.current = cameraLocked;
+    if (!sceneRef.current) return;
+    sceneRef.current.controls.enabled = cameraModeRef.current === 'overview' && !cameraLocked;
+  }, [cameraLocked]);
+
+  useEffect(() => {
+    if (!sceneRef.current || cameraResetRequest === 0) return;
+    const state = sceneRef.current;
+    const { camera, controls, cameraGoal, targetGoal } = state;
+    if (cameraModeRef.current === 'side') {
+      cameraGoal.set(7, 6.5, 22);
+      targetGoal.set(4, 2, 0);
+    } else if (cameraModeRef.current === 'follow') {
+      cameraGoal.set(-4, 4.2, 8);
+      targetGoal.set(2, 1.5, 0);
+    } else {
+      cameraGoal.set(11, 11, 22);
+      targetGoal.set(6, 1.8, 0);
+    }
+    camera.position.copy(cameraGoal);
+    controls.target.copy(targetGoal);
+    controls.update();
+  }, [cameraResetRequest]);
 
   useEffect(() => {
     if (sceneRef.current) sceneRef.current.forceGroup.visible = showForces && sceneRef.current.isFlying;
@@ -841,7 +877,7 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
       state.pathLine.geometry.setDrawRange(0, 0);
       state.pathMaterial.opacity = 0;
       state.previousPathMaterial.opacity = 0;
-      state.controls.enabled = cameraModeRef.current === 'overview';
+      state.controls.enabled = cameraModeRef.current === 'overview' && !cameraLockedRef.current;
       if (cameraModeRef.current === 'side') {
         state.cameraGoal.set(7, 6.5, 22);
         state.targetGoal.set(4, 2, 0);
@@ -881,7 +917,7 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
     pathMaterial.opacity = 0.8;
     forceGroup.visible = showForces;
     sceneRef.current.isFlying = true;
-    controls.enabled = false;
+    controls.enabled = cameraModeRef.current === 'overview' && !cameraLockedRef.current;
     const paperModel = plane.userData.paperModel;
     const duration = clamp(result.airtime * 1050, 1900, 4400) * (isReplay ? 1.85 : 1);
     const landingDuration = isReplay ? 820 : 520;
@@ -927,9 +963,6 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
       } else if (cameraModeRef.current === 'side') {
         cameraGoal.set(midpoint + 1.5, Math.max(5.5, scenePeak + 3.5), Math.max(24, sceneDistance * 1.25));
         targetGoal.set(midpoint + 1.5, Math.max(1.5, scenePeak * 0.42), 0);
-      } else {
-        cameraGoal.set(midpoint + 2, Math.max(10, scenePeak + 7), Math.max(19, sceneDistance * 0.78));
-        targetGoal.set(midpoint, Math.max(1.2, scenePeak * 0.35), 0);
       }
 
       if (progress < 1) {
@@ -948,7 +981,7 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
       } else {
         sceneRef.current.isFlying = false;
         forceGroup.visible = false;
-        controls.enabled = cameraModeRef.current === 'overview';
+        controls.enabled = cameraModeRef.current === 'overview' && !cameraLockedRef.current;
         if (!isReplay) onResult(result);
         onFlightComplete();
         onFlightState(false);
@@ -988,6 +1021,8 @@ function App() {
   const [predictionFeedback, setPredictionFeedback] = useState(null);
   const [showForces, setShowForces] = useState(true);
   const [cameraMode, setCameraMode] = useState('side');
+  const [cameraLocked, setCameraLocked] = useState(false);
+  const [cameraResetRequest, setCameraResetRequest] = useState(0);
   const [isAnimating, setIsAnimating] = useState(false);
   const [flightEvent, setFlightEvent] = useState(null);
   const [returnPrompt, setReturnPrompt] = useState(false);
@@ -1096,6 +1131,7 @@ function App() {
     setPrediction(null);
     setPredictionFeedback(null);
     setCameraMode('side');
+    setCameraLocked(false);
     setIsAnimating(false);
     setFlightRequest({ id: 0, mode: 'launch' });
     setFlightEvent(null);
@@ -1104,7 +1140,7 @@ function App() {
 
   return (
     <main className="app-shell">
-      <FlightScene settings={settings} flightRequest={flightRequest} replayResult={result} onResult={handleResult} onFlightComplete={handleFlightComplete} onFlightState={setIsAnimating} onFlightEvent={setFlightEvent} showForces={showForces} cameraMode={cameraMode} />
+      <FlightScene settings={settings} flightRequest={flightRequest} replayResult={result} onResult={handleResult} onFlightComplete={handleFlightComplete} onFlightState={setIsAnimating} onFlightEvent={setFlightEvent} showForces={showForces} cameraMode={cameraMode} cameraLocked={cameraLocked} cameraResetRequest={cameraResetRequest} />
       <header className="topbar">
         <div className="brand"><Plane size={22} /><span>Suzanne <b>飛行實驗室</b></span></div>
         <div className="record">世界紀錄機型 · 教學模擬</div>
@@ -1133,6 +1169,26 @@ function App() {
         <div className="panel-head">
           <div><small>任務 01</small><h1>調整 Suzanne</h1></div>
           <Info size={19} />
+        </div>
+
+        <div className="camera-actions" aria-label="視角控制">
+          <span>視角控制</span>
+          <div>
+            <button
+              type="button"
+              className={cameraLocked ? 'selected' : ''}
+              disabled={cameraMode !== 'overview'}
+              aria-pressed={cameraLocked}
+              title={cameraMode === 'overview' ? (cameraLocked ? '解除視角鎖定' : '鎖定視角') : '請先切換到全景模式'}
+              onClick={() => setCameraLocked(value => !value)}
+            >
+              {cameraLocked ? <Lock size={14} /> : <Unlock size={14} />}
+              {cameraLocked ? '已鎖定' : '鎖定視角'}
+            </button>
+            <button type="button" onClick={() => setCameraResetRequest(value => value + 1)} title="視角重置">
+              <RotateCcw size={14} />視角重置
+            </button>
+          </div>
         </div>
 
         <div className="segmented" aria-label="飛行目標">
@@ -1278,7 +1334,7 @@ function App() {
           : result?.verdict ?? '先建立基準試飛，再修改一個參數並預測結果。'}</p>
       </section>
 
-      <div className="hint">全景模式可拖曳旋轉 · 雙指縮放</div>
+      <div className="hint">全景模式可拖曳旋轉 · 雙指縮放 · 可鎖定／重置視角</div>
     </main>
   );
 }
