@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Brain, CheckCircle2, CloudFog, CloudLightning, CloudRain, Crosshair, Eye, EyeOff, Gauge, Info, Lock, Plane, Rewind, RotateCcw, Ruler, Scale, Snowflake, Sparkles, Sun, Unlock, Wind } from 'lucide-react';
 import './styles.css';
+import { LEVELS, PROGRESS_KEY, loadProgress, isUnlocked, rateFlight, recordFlight, starRule } from './challenges.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const WORLD_X_SCALE = 1.25;
@@ -1181,6 +1182,19 @@ function Slider({ label, value, min, max, step = 1, unit, onChange, disabled = f
 }
 
 function App() {
+  const [progress, setProgress] = useState(() => { try { return loadProgress(window.localStorage); } catch { return {}; } });
+  const [storageWarning, setStorageWarning] = useState(false);
+  const [panelView, setPanelView] = useState('flight');
+  const [activeLevel, setActiveLevel] = useState(null);
+  const [challengeResult, setChallengeResult] = useState(null);
+  const panelRef = useRef(null);
+  const outcomeRef = useRef(null);
+  useEffect(() => { if (panelRef.current) panelRef.current.scrollTop = 0; }, [panelView, activeLevel?.id]);
+  useEffect(() => { if (challengeResult) outcomeRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [challengeResult]);
+  useEffect(() => {
+    try { window.localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress)); setStorageWarning(false); }
+    catch { setStorageWarning(true); }
+  }, [progress]);
   const [settings, setSettings] = useState({ weatherLevel: 1, haze: false, lightningRate: 0.5, goal: 'far', clipCount: 1, clipPosition: 22, clipPlacement: 'body', throwAngle: 10, throwPower: 55, wind: 0, windDirection: 'front', weather: 'clear', airframe: { ...DEFAULT_AIRFRAME }, propeller: { ...DEFAULT_PROPELLER } });
   const [livePlace, setLivePlace] = useState('桃園');
   const [liveStatus, setLiveStatus] = useState('');
@@ -1199,16 +1213,19 @@ function App() {
   const [flightEvent, setFlightEvent] = useState(null);
   const [returnPrompt, setReturnPrompt] = useState(false);
   const update = (key, value) => {
+    if (isAnimating || (activeLevel && (['goal', 'weather', 'weatherLevel', 'wind', 'windDirection', 'haze', 'lightningRate'].includes(key) || (activeLevel.id === 1 && ['clipCount', 'clipPosition', 'clipPlacement'].includes(key))))) return;
     setSettings(current => ({ ...current, [key]: value }));
     setPrediction(null);
     setPredictionFeedback(null);
   };
   const updateAirframe = (key, value) => {
+    if (isAnimating || (activeLevel && activeLevel.id < 3)) return;
     setSettings(current => ({ ...current, airframe: { ...current.airframe, [key]: value } }));
     setPrediction(null);
     setPredictionFeedback(null);
   };
   const updatePropeller = (key, value) => {
+    if (isAnimating || activeLevel) return;
     setSettings(current => ({ ...current, propeller: { ...current.propeller, [key]: value } }));
     setPrediction(null);
     setPredictionFeedback(null);
@@ -1224,6 +1241,11 @@ function App() {
   } : null;
 
   const handleResult = next => {
+    if (activeLevel) {
+      const stars = rateFlight(activeLevel, next);
+      setChallengeResult({ stars, result: next });
+      setProgress(current => recordFlight(current, activeLevel, next));
+    }
     if (result) {
       setPreviousResult(result);
       const correct = prediction === 'farther'
@@ -1240,7 +1262,9 @@ function App() {
   const handleFlightComplete = () => setReturnPrompt(true);
 
   const launch = () => {
-    if (isAnimating || (result && !prediction)) return;
+    if (isAnimating || (!activeLevel && result && !prediction) || panelView !== 'flight') return;
+    setChallengeResult(null);
+    setReturnPrompt(false);
     setFlightRequest(current => ({ id: current.id + 1, mode: 'launch' }));
   };
 
@@ -1348,9 +1372,25 @@ function App() {
     setCameraMode('side');
     setCameraLocked(false);
     setIsAnimating(false);
-    setFlightRequest({ id: 0, mode: 'launch' });
+    setFlightRequest(current => ({ id: current.id + 1, mode: 'return' }));
     setFlightEvent(null);
     setReturnPrompt(false);
+    setChallengeResult(null);
+  };
+
+  const startLevel = level => {
+    if (isAnimating || !isUnlocked(progress, level.id)) return;
+    reset();
+    setActiveLevel(level);
+    setPanelView('flight');
+    setSettings(current => ({ ...current, goal: level.goal, weather: level.weather, weatherLevel: level.weather === 'rain' ? 0 : 1, wind: level.wind, windDirection: level.direction }));
+  };
+
+  const enterFreeMode = () => {
+    if (isAnimating) return;
+    reset();
+    setActiveLevel(null);
+    setPanelView('flight');
   };
 
   return (
@@ -1362,7 +1402,7 @@ function App() {
         <button className="force-toggle" aria-pressed={showForces} onClick={() => setShowForces(value => !value)}>
           {showForces ? <Eye size={17} /> : <EyeOff size={17} />}受力
         </button>
-        <button className="icon-button" onClick={reset} title="重設所有參數" aria-label="重設所有參數"><RotateCcw size={19} /></button>
+        <button className="icon-button" disabled={isAnimating} onClick={() => activeLevel ? startLevel(activeLevel) : reset()} title="重設本次參數（保留成就）" aria-label="重設本次參數（保留成就）"><RotateCcw size={19} /></button>
       </header>
 
       {showForces && <div className="force-legend" aria-label="飛行力量圖例">
@@ -1380,9 +1420,51 @@ function App() {
         <strong>{flightEvent.label}</strong><span>{flightEvent.detail}</span>
       </div>}
 
-      <aside className={`control-panel ${isAnimating ? 'is-flying' : ''}`} aria-busy={isAnimating}>
+      <aside ref={panelRef} className={`control-panel ${isAnimating ? 'is-flying' : ''}`} aria-busy={isAnimating}>
+        <nav className="challenge-nav" aria-label="挑戰與成就">
+          <button disabled={isAnimating} aria-pressed={panelView === 'levels'} onClick={() => setPanelView('levels')}>⚑ 關卡挑戰<span>依序挑戰 5 關</span></button>
+          <button disabled={isAnimating} aria-pressed={panelView === 'achievements'} onClick={() => setPanelView('achievements')}>🏅 成就紀錄<span>{Object.values(progress).reduce((sum, item) => sum + Boolean(item.completedAt) + Boolean(item.masteredAt), 0)} / 10</span></button>
+        </nav>
+        {storageWarning && <p className="save-warning" role="status">瀏覽器無法保存進度，目前紀錄只保留至此頁關閉。</p>}
+        {panelView === 'levels' && <section className="challenge-menu">
+          <h1>關卡挑戰</h1><p>取得 1 星即可解鎖下一關；可不限次數重試。</p>
+          {LEVELS.map(level => <article className="level-card" key={level.id}>
+            <div className="level-heading"><strong>{level.id}．{level.name}</strong><span aria-label={`最高 ${progress[level.id]?.stars ?? 0} 星`}>{'★'.repeat(progress[level.id]?.stars ?? 0)}{'☆'.repeat(3 - (progress[level.id]?.stars ?? 0))}</span></div>
+            <small>{level.environment}</small><p>{level.instruction}</p>
+            <ul>{level.thresholds.map((_, index) => <li key={index}>{starRule(level, index)}</li>)}</ul>
+            <button disabled={!isUnlocked(progress, level.id)} onClick={() => startLevel(level)}>{isUnlocked(progress, level.id) ? '開始挑戰' : `🔒 通過第 ${level.id - 1} 關後解鎖`}</button>
+          </article>)}
+          <button className="menu-back" onClick={() => setPanelView('flight')}>返回{activeLevel ? '目前挑戰' : '自由實驗'}</button>
+          {activeLevel && <button className="menu-back" onClick={enterFreeMode}>離開挑戰，回到自由實驗</button>}
+        </section>}
+        {panelView === 'achievements' && <section className="challenge-menu">
+          <h1>成就紀錄</h1><p>紀錄保存在此瀏覽器；清除網站資料會移除紀錄。</p>
+          {!Object.values(progress).some(item => item.completedAt) && <p className="empty-achievements">還沒有成就，完成第一關就能取得「起飛新手」！</p>}
+          {LEVELS.map(level => <article className="level-card" key={level.id}>
+            <div className="level-heading"><strong>{level.id}．{level.name}</strong><span>{'★'.repeat(progress[level.id]?.stars ?? 0)}{'☆'.repeat(3 - (progress[level.id]?.stars ?? 0))}</span></div>
+            <small>挑戰 {progress[level.id]?.attempts ?? 0} 次{progress[level.id]?.best != null && ` · 最佳${level.metric === 'deviation' ? '側偏' : level.metric === 'peak' ? '高度' : '距離'} ${progress[level.id].best.toFixed(1)} 公尺`}</small>
+            {[['completedAt', level.achievement], ['masteredAt', `${level.name}・三星成就`]].map(([key, name]) => <div className={`achievement-item ${progress[level.id]?.[key] ? 'earned' : ''}`} key={key}>
+              <strong>{progress[level.id]?.[key] ? '🏅' : '🔒'} {name}</strong><small>{progress[level.id]?.[key] ? `取得於 ${new Date(progress[level.id][key]).toLocaleDateString('zh-TW')}` : key === 'completedAt' ? '首次過關後取得' : '取得 3 星後獲得'}</small>
+            </div>)}
+          </article>)}
+          <button className="menu-back" onClick={() => setPanelView('flight')}>返回{activeLevel ? '目前挑戰' : '自由實驗'}</button>
+        </section>}
+        <div hidden={panelView !== 'flight'}>
+        {activeLevel && <section className="challenge-banner">
+          <strong>第 {activeLevel.id} 關 · {activeLevel.name}</strong><p>{activeLevel.environment}（固定）</p><p>{activeLevel.instruction}</p>
+          <ul>{activeLevel.thresholds.map((_, index) => <li key={index}>{starRule(activeLevel, index)}</li>)}</ul>
+          <small>最高 {'★'.repeat(progress[activeLevel.id]?.stars ?? 0)}{'☆'.repeat(3 - (progress[activeLevel.id]?.stars ?? 0))} · 螺旋槳停用</small>
+          <button disabled={isAnimating} className="menu-back" onClick={enterFreeMode}>回到自由實驗</button>
+        </section>}
+        {challengeResult && <section ref={outcomeRef} className="challenge-outcome" role="status">
+          <strong>{challengeResult.stars ? `挑戰成功！${'★'.repeat(challengeResult.stars)}${'☆'.repeat(3 - challengeResult.stars)}` : '還差一點，再試一次！'}</strong>
+          <p>距離 {challengeResult.result.distance.toFixed(1)} m · 高度 {challengeResult.result.peak.toFixed(1)} m · 側偏 {Math.abs(challengeResult.result.deviation).toFixed(1)} m</p>
+          {challengeResult.stars > 0 && <p>已取得「{activeLevel.achievement}」{challengeResult.stars === 3 ? '與本關三星成就' : ''}。{activeLevel.id < 5 ? '下一關已解鎖！' : '恭喜通過全部關卡！'}</p>}
+          {challengeResult.stars > 0 && activeLevel.id < 5 && <button disabled={isAnimating} onClick={() => startLevel(LEVELS[activeLevel.id])}>挑戰下一關</button>}
+        </section>}
+        <fieldset className="flight-controls" disabled={isAnimating}>
         <div className="panel-head">
-          <div><small>任務 01</small><h1>調整 Suzanne</h1></div>
+          <div><small>{activeLevel ? `關卡 ${activeLevel.id}` : '自由實驗'}</small><h1>調整 Suzanne</h1></div>
           <Info size={19} />
         </div>
 
@@ -1406,11 +1488,13 @@ function App() {
           </div>
         </div>
 
-        <div className="segmented" aria-label="飛行目標">
+        <div className="segmented" aria-label="飛行目標" hidden={Boolean(activeLevel)}>
           <button className={settings.goal === 'far' ? 'active' : ''} onClick={() => update('goal', 'far')}><Crosshair size={16} />飛更遠</button>
           <button className={settings.goal === 'high' ? 'active' : ''} onClick={() => update('goal', 'high')}><Sparkles size={16} />飛更高</button>
         </div>
 
+        <fieldset className="flight-controls" disabled={Boolean(activeLevel && activeLevel.id < 3)}>
+        {activeLevel && activeLevel.id < 3 && <p className="section-note">機型固定，第 3 關起開放調整。</p>}
         <section className="airframe-section">
           <div className="section-heading-row"><h2><Ruler size={15} />機型調整</h2><button className="mini-reset" type="button" onClick={resetAirframe}>恢復預設</button></div>
           <p className="section-note">調整紙飛機尺寸與翼端折角；參數會同時影響 3D 模型、升力、阻力、穩定度與落點。</p>
@@ -1426,7 +1510,8 @@ function App() {
           </div>
         </section>
 
-        <section className={`propeller-section ${settings.propeller.enabled ? '' : 'is-disabled'}`}>
+        </fieldset>
+        <section hidden={Boolean(activeLevel)} className={`propeller-section ${settings.propeller.enabled ? '' : 'is-disabled'}`}>
           <div className="section-heading-row"><h2><RotateCcw size={15} />螺旋槳調整</h2><button className="mini-reset" type="button" onClick={resetPropeller}>恢復預設</button></div>
           <p className="section-note">可選擇安裝位置、槳葉長度與重量；啟用後會同步影響模型、重心、阻力與前進推力。</p>
           <div className="propeller-toggle"><span>安裝螺旋槳</span><button type="button" className={settings.propeller.enabled ? 'selected' : ''} onClick={() => updatePropeller('enabled', !settings.propeller.enabled)}>{settings.propeller.enabled ? '已安裝' : '未安裝'}</button></div>
@@ -1447,6 +1532,8 @@ function App() {
           <div className="propeller-status">{settings.propeller.enabled ? `目前裝在${({ nose: '機頭', left: '左翼', right: '右翼', tail: '機尾' })[settings.propeller.placement]}，重量 ${settings.propeller.weight.toFixed(1)} g` : '未安裝時不會改變原本的飛行結果'}</div>
         </section>
 
+        <fieldset className="flight-controls" disabled={activeLevel?.id === 1}>
+        {activeLevel?.id === 1 && <p className="section-note">第一關配重固定，先試試角度與力道。</p>}
         <section>
           <h2>迴紋針配重</h2>
           <div className="placement-options" aria-label="迴紋針放置區域">
@@ -1460,7 +1547,8 @@ function App() {
           <div className="plane-map"><span className="nose">機頭</span><div
             className="mini-plane"
             role="slider"
-            tabIndex={0}
+            tabIndex={isAnimating || activeLevel?.id === 1 ? -1 : 0}
+            aria-disabled={isAnimating || activeLevel?.id === 1}
             aria-label="拖曳迴紋針位置"
             aria-valuemin={5}
             aria-valuemax={75}
@@ -1485,10 +1573,12 @@ function App() {
           </div>
         </section>
 
+        </fieldset>
         <section>
           <h2>投擲設定</h2>
           <Slider label="仰角" value={settings.throwAngle} min={0} max={30} unit="°" onChange={v => update('throwAngle', v)} />
           <Slider label="力道" value={settings.throwPower} min={20} max={100} unit="%" onChange={v => update('throwPower', v)} />
+          <fieldset className="flight-controls" disabled={Boolean(activeLevel)}>
           <Slider label="風速" value={settings.wind} min={settings.windDirection === 'front' ? -10 : 0} max={10} unit=" m/s" onChange={v => update('wind', v)} />
           <div className="wind-presets" aria-label="風速快速設定">
             {settings.windDirection === 'front' ? <>
@@ -1537,9 +1627,10 @@ function App() {
                 {liveMode && <><div className="weather-live-row"><select aria-label="城市" value={livePlace} onChange={event => setLivePlace(event.target.value)}>{weatherPlaces.map(place => <option key={place.name} value={place.name}>{place.name}</option>)}</select><button type="button" onClick={() => setLiveRefresh(n => n + 1)}>立即更新</button></div><p>{liveStatus}</p><small>來源：Open-Meteo。頁面開啟時讀取並每 10 分鐘更新；依測站附近的模式格點資料近似分類，非氣象署颱風警報。</small></>}
               </div>
               {settings.weather === 'typhoon' && <p className="typhoon-warning">颱風模式：強風 10 m/s、斜向暴雨、陣風亂流與不規則側翻。</p>}
+          </fieldset>
         </section>
 
-        {result && <section className="prediction-section">
+        {result && !activeLevel && <section className="prediction-section">
           <h2><Brain size={15} />先預測，再試飛</h2>
           <div className="prediction-options">
             <button className={prediction === 'farther' ? 'selected' : ''} onClick={() => setPrediction('farther')}>距離增加</button>
@@ -1555,8 +1646,10 @@ function App() {
         </div>}
 
         <div className="flight-actions">
-          <button className="launch" disabled={isAnimating || Boolean(result && !prediction)} onClick={launch}><Plane size={20} />{isAnimating ? '飛行中…' : result && !prediction ? '請先選擇預測' : result ? '再次試飛' : '建立基準試飛'}</button>
+          <button className="launch" disabled={isAnimating || Boolean(!activeLevel && result && !prediction)} onClick={launch}><Plane size={20} />{isAnimating ? '飛行中…' : activeLevel ? (result ? '再次挑戰' : '開始試飛') : result && !prediction ? '請先選擇預測' : result ? '再次試飛' : '建立基準試飛'}</button>
           {result && <button className="replay" disabled={isAnimating} onClick={replay}><Rewind size={18} />慢動作重播</button>}
+        </div>
+        </fieldset>
         </div>
       </aside>
 

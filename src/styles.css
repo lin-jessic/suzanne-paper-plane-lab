@@ -9,9 +9,39 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 button, input { font: inherit; }
 button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: 0.55; }
+button:focus-visible { outline: 3px solid #2185a0; outline-offset: 3px; }
+.flight-controls { border: 0; padding: 0; margin: 0; min-width: 0; }
+.flight-controls:disabled > .airframe-section, .flight-controls:disabled > .slider-row { opacity: 0.6; }
+.mini-plane[aria-disabled='true'] { pointer-events: none; opacity: 0.6; }
+.challenge-nav { display: grid; gap: 7px; margin-bottom: 18px; }
+.challenge-nav button { display: flex; align-items: center; gap: 7px; min-height: 42px; padding: 10px 12px; border: 2px solid transparent; border-radius: 7px; background: var(--nav-bg); color: #fff; box-shadow: 0 3px 8px rgba(24, 51, 43, 0.16); font-size: 13px; font-weight: 800; text-align: left; transition: background 150ms ease, box-shadow 150ms ease; }
+.challenge-nav button:first-child { --nav-bg: #b94716; --nav-active: #87320e; }
+.challenge-nav button:nth-child(2) { --nav-bg: #245b9b; --nav-active: #193e6a; }
+.challenge-nav button:hover:not(:disabled), .challenge-nav button[aria-pressed='true'] { background: var(--nav-active); }
+.challenge-nav button[aria-pressed='true'] { border-color: #fff; box-shadow: 0 0 0 2px var(--nav-active), 0 3px 8px rgba(24, 51, 43, 0.16); }
+.challenge-nav span { margin-left: auto; font-size: 10px; font-weight: 500; }
+.challenge-menu h1 { margin: 0; font-size: 22px; }
+.challenge-menu > p, .challenge-banner p, .challenge-outcome p { font-size: 12px; line-height: 1.7; }
+.level-card { margin: 12px 0; padding: 13px; border: 1px solid #c7dcd2; border-radius: 8px; background: #fff; }
+.level-heading { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.level-heading > span { color: #ad7415; white-space: nowrap; }
+.level-card small, .challenge-banner small { display: block; margin-top: 6px; font-size: 11px; color: #5c776c; line-height: 1.6; }
+.level-card p { margin: 8px 0; font-size: 12px; line-height: 1.7; }
+.level-card ul, .challenge-banner ul { padding: 0; margin: 10px 0; list-style: none; font-size: 11px; line-height: 1.9; }
+.level-card > button, .challenge-outcome button { width: 100%; min-height: 36px; border: 0; border-radius: 5px; background: #17694f; color: #fff; font-size: 12px; font-weight: 700; }
+.level-card > button:disabled { background: #e4ebe7; color: #576e63; opacity: 1; }
+.menu-back { width: 100%; min-height: 35px; margin-top: 8px; border: 1px solid #bbd2c7; border-radius: 5px; background: #fff; color: #285d4d; font-size: 12px; }
+.control-panel .challenge-banner, .control-panel .challenge-outcome { padding: 12px; margin-bottom: 15px; border: 1px solid #b9d3c8; border-radius: 7px; background: #edf7f1; }
+.control-panel .challenge-outcome { background: #fff6df; border-color: #e2c786; }
+.challenge-banner > strong, .challenge-outcome > strong { font-size: 14px; }
+.achievement-item { padding: 10px; margin-top: 8px; border-radius: 5px; background: #f0f3f1; color: #718078; font-size: 12px; }
+.achievement-item.earned { background: #fff4d6; color: #835f15; }
+.save-warning, .empty-achievements { font-size: 12px; line-height: 1.7; padding: 10px; border-radius: 6px; background: #fff0d8; color: #805517; }
 
 .app-shell { position: relative; width: 100%; height: 100dvh; overflow: hidden; }
 .scene { position: absolute; inset: 0; }
@@ -218,7 +248,7 @@ input[type='range']:disabled { cursor: not-allowed; }
     .weather-options button:hover { transform: translateY(-1px); border-color: #7aaca4; }
     .weather-description { margin: 9px 0 0; padding: 9px 10px; border: 1px solid #cbded9; border-radius: 6px; background: #f1f7f5; color: #45695f; font-size: 10px; line-height: 1.6; }
     .weather-description span { display: block; margin-top: 3px; font-weight: 700; color: #2e6153; }
-    
+
     .weather-settings, .weather-live { margin-top: 10px; border: 1px solid #d3dfdc; border-radius: 8px; padding: 11px; background: #f7faf8; }
     .weather-settings > label, .weather-live > label { display: block; margin-bottom: 7px; font-weight: 700; color: #375d52; font-size: 11px; }
     .weather-settings select, .weather-live select { width: 100%; min-height: 34px; padding: 5px 7px; border: 1px solid #bdcec8; background: #fff; border-radius: 5px; color: #365b51; font-size: 11px; }
@@ -235,4 +265,4 @@ input[type='range']:disabled { cursor: not-allowed; }
     .weather-live-row button { flex: 0 0 auto; border: 1px solid #a8c6bc; border-radius: 5px; padding: 8px; color: #315b50; background: #fff; font-size: 10px; font-weight: 700; }
     .weather-live p, .weather-live small { color: #55736b; font-size: 10px; line-height: 1.5; }
     .weather-live p { margin: 8px 0 4px; }
-    
+
