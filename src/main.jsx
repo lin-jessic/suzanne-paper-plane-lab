@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { Brain, CheckCircle2, CloudRain, Crosshair, Eye, EyeOff, Gauge, Info, Lock, Plane, Rewind, RotateCcw, Ruler, Scale, Sparkles, Sun, Unlock, Wind } from 'lucide-react';
+import { Brain, CheckCircle2, CloudFog, CloudLightning, CloudRain, Crosshair, Eye, EyeOff, Gauge, Info, Lock, Plane, Rewind, RotateCcw, Ruler, Scale, Snowflake, Sparkles, Sun, Unlock, Wind } from 'lucide-react';
 import './styles.css';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -11,7 +11,92 @@ const WORLD_Y_SCALE = 1.1;
 const WORLD_Z_SCALE = 1.35;
 const START_HEIGHT = 1.35 * WORLD_Y_SCALE;
 
-const DEFAULT_AIRFRAME = {
+const weatherProfiles = {
+      clear: { wind: 0, description: '天空晴朗，適合觀察基本飛行軌跡。' },
+      rain: { wind: 3, description: '降雨伴隨微風，飛行時注意側風。' },
+      typhoon: { wind: 10, description: '強風、斜向暴雨與不規則亂流。' },
+      snow: { wind: 4, description: '緩慢飄雪與間歇陣風，飛機容易輕微晃動。' },
+      fog: { wind: 2, description: '濃霧降低能見度，遠處的飛行軌跡較難觀察。' },
+      thunderstorm: { wind: 8, description: '雷雨伴隨短暫強陣風和閃電。' }
+    };
+
+    const weather_v2_profiles = {
+      clear: [
+        { label: '柔和陽光', intensity: 0.55, wind: 0 },
+        { label: '一般晴天', intensity: 1, wind: 0 },
+        { label: '烈日', intensity: 1.5, wind: 1 },
+        { label: '酷熱烈日', intensity: 1.9, wind: 2 }
+      ],
+      rain: [
+        { label: '小雨', intensity: 0.4, wind: 2 },
+        { label: '大雨', intensity: 0.85, wind: 4 },
+        { label: '大豪雨', intensity: 1.35, wind: 7 },
+        { label: '超大豪雨', intensity: 1.8, wind: 10 }
+      ],
+      typhoon: [
+        { label: '輕度颱風', intensity: 0.6, wind: 5 },
+        { label: '中度颱風', intensity: 1, wind: 7 },
+        { label: '強烈颱風', intensity: 1.45, wind: 9 },
+        { label: '超級強颱（遊戲情境）', intensity: 1.9, wind: 10 }
+      ],
+      snow: [
+        { label: '小雪', intensity: 0.4, wind: 1 },
+        { label: '中雪', intensity: 0.8, wind: 3 },
+        { label: '大雪', intensity: 1.35, wind: 6 },
+        { label: '暴風雪', intensity: 1.9, wind: 9 }
+      ],
+      fog: [
+        { label: '薄霧', intensity: 0.4, wind: 1 },
+        { label: '中霧', intensity: 0.9, wind: 2 },
+        { label: '濃霧', intensity: 1.4, wind: 2 },
+        { label: '極濃霧', intensity: 1.9, wind: 3 }
+      ],
+      thunderstorm: [
+        { label: '偶發閃電', intensity: 0.45, wind: 3, flashes: 0.2 },
+        { label: '一般雷雨', intensity: 0.9, wind: 5, flashes: 0.5 },
+        { label: '頻繁落雷', intensity: 1.4, wind: 8, flashes: 1 },
+        { label: '劇烈雷暴', intensity: 1.9, wind: 10, flashes: 1.8 }
+      ]
+    };
+
+    const weatherKnowledge = {
+      clear: '日照強度主要改變視覺亮度；酷熱可能影響空氣密度，但本模擬只加入輕微熱對流擾動。',
+      rain: '臺灣的「大雨、豪雨、大豪雨、超大豪雨」依特定時段的累積雨量判定，並非單看瞬間雨滴密度。本遊戲以不同雨勢做情境示意。',
+      typhoon: '臺灣官方颱風強度分輕度、中度、強烈三級，依中心附近最大持續風速判定。「超級強颱」是額外遊戲情境，場內風速不等於颱風中心風速。',
+      snow: '降雪時，風和亂流會讓飛機難以維持穩定；真實飛機還可能面臨結冰，但本紙飛機模型不模擬積冰質量。',
+      fog: '霧主要降低能見度，未必伴隨強風。偏黃的霾可能與懸浮微粒有關，和單純水滴形成的霧不同。',
+      thunderstorm: '雷暴通常伴隨強烈對流、陣風和閃電。遊戲以畫面閃光和較大亂流示意，不預測真實落雷位置。'
+    };
+
+    const weatherPlaces = [
+      { name: '桃園', lat: 24.9937, lon: 121.3010 },
+      { name: '臺北', lat: 25.0330, lon: 121.5654 },
+      { name: '新北', lat: 25.0124, lon: 121.4657 },
+      { name: '新竹', lat: 24.8138, lon: 120.9675 },
+      { name: '臺中', lat: 24.1477, lon: 120.6736 },
+      { name: '臺南', lat: 22.9999, lon: 120.2270 },
+      { name: '高雄', lat: 22.6273, lon: 120.3014 },
+      { name: '宜蘭', lat: 24.7570, lon: 121.7533 },
+      { name: '花蓮', lat: 23.9911, lon: 121.6112 },
+      { name: '臺東', lat: 22.7583, lon: 121.1444 },
+      { name: '基隆', lat: 25.1276, lon: 121.7392 },
+      { name: '屏東', lat: 22.6829, lon: 120.4879 }
+    ];
+
+    function classifyLiveWeather(current) {
+      const code = current.weather_code ?? 0;
+      const wind = current.wind_speed_10m ?? 0;
+      const precipitation = current.precipitation ?? 0;
+      const visibility = current.visibility ?? 10000;
+      if ([95, 96, 99].includes(code)) return 'thunderstorm';
+      if ([45, 48].includes(code) || visibility < 1000) return 'fog';
+      if ([71, 73, 75, 77, 85, 86].includes(code)) return 'snow';
+      if (wind >= 20 && precipitation >= 1) return 'typhoon';
+      if ([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(code) || precipitation > 0) return 'rain';
+      return 'clear';
+    }
+
+    const DEFAULT_AIRFRAME = {
   bodyLength: 100,
   wingSpan: 100,
   wingChord: 100,
@@ -34,6 +119,8 @@ const propellerLateralSign = placement => placement === 'left' ? 1 : placement =
 
 function simulateFlight(settings) {
   const { clipCount, clipPosition, clipPlacement, throwAngle, throwPower, wind, windDirection, weather, goal } = settings;
+      const weatherLevel = settings.weatherLevel ?? 1;
+      const weatherStrength = weather_v2_profiles[weather]?.[weatherLevel]?.intensity ?? 1;
   const airframe = { ...DEFAULT_AIRFRAME, ...(settings.airframe ?? {}) };
   const propeller = { ...DEFAULT_PROPELLER, ...(settings.propeller ?? {}) };
   const lengthFactor = airframe.bodyLength / 100;
@@ -89,7 +176,11 @@ function simulateFlight(settings) {
     const gustWave = weather === 'typhoon'
       ? Math.sin(t * 5.1 + 0.7) * 0.56 + Math.sin(t * 11.7 + 1.9) * 0.3 + Math.sin(t * 2.3) * 0.22
       : 0;
-    const turbulence = weather === 'typhoon' ? gustWave * (0.7 + Math.abs(wind) * 0.075) : 0;
+    const snowGust = Math.sin(t * 3.4) * 0.28 + Math.sin(t * 7.1 + 1.4) * 0.12;
+        const thunderGust = Math.sin(t * 7.8) * 0.48 + Math.sin(t * 15.6 + 0.8) * 0.35 + Math.sin(t * 2.5) * 0.2;
+        const turbulence = weather === 'typhoon' ? gustWave * (0.7 + Math.abs(wind) * 0.075) * weatherStrength
+          : weather === 'thunderstorm' ? thunderGust * (0.6 + Math.abs(wind) * 0.065) * weatherStrength
+          : weather === 'snow' ? snowGust * (0.35 + Math.abs(wind) * 0.04) * weatherStrength : weather === 'rain' ? Math.sin(t * 4.6) * 0.13 * weatherStrength : weather === 'clear' ? Math.sin(t * 2.7) * 0.055 * Math.max(0, weatherStrength - 1) : 0;
     const roll = maxBank * (1 - Math.exp(-t * 2.4))
       + sideWeight * Math.sin(t * 7) * 0.018
       + crosswind * 0.012 * (1 - Math.exp(-t * 1.8))
@@ -118,12 +209,15 @@ function simulateFlight(settings) {
   else if (cg > 36) verdict = '重心偏後，飛機可能抬頭並左右搖晃。';
   else if (crosswindSign !== 0 && Math.abs(wind) > 2) verdict = `${windDirection === 'left' ? '左側風' : '右側風'}讓落點側偏約 ${Math.abs(deviation).toFixed(1)} 公尺。`;
   else if (weather === 'typhoon') verdict = '颱風亂流使高度與方向持續改變，落點最難預測。';
+      else if (weather === 'thunderstorm') verdict = '雷雨中的陣風讓飛機高度與落點出現較明顯的變化。';
+      else if (weather === 'snow') verdict = '雪天的間歇陣風讓飛機產生輕微晃動。';
+      else if (weather === 'fog') verdict = '濃霧影響觀察距離，實際飛行仍受風向和風速影響。';
   else if (longitudinalWind > 3) verdict = '順風很強，軌跡會變遠，但真實飛行也更難控制。';
   else if (longitudinalWind < -3) verdict = '逆風很強，飛機前進速度下降，但可能增加滯空時間。';
 
   const peakIndex = points.reduce((best, point, index) => point.y > points[best].y ? index : best, 0);
   const events = [{ progress: peakIndex / Math.max(1, points.length - 1), label: '到達最高點', detail: `${peak.toFixed(1)} 公尺`, tone: 'peak' }];
-  if (weather === 'typhoon') {
+  if (weather === 'typhoon' || weather === 'thunderstorm') {
     const gustIndex = points.reduce((best, point, index) => Math.abs(point.turbulence) > Math.abs(points[best].turbulence) ? index : best, 0);
     events.push({ progress: gustIndex / Math.max(1, points.length - 1), label: '強烈亂流', detail: '高度與姿態突然改變', tone: 'danger' });
   }
@@ -434,7 +528,7 @@ function updateWindStreaks(streaks, wind, windDirection, delta) {
 }
 
 function makeRainStreaks(isMobile) {
-  const count = isMobile ? 80 : 200;
+  const count = isMobile ? 95 : 170;
   const bases = new Float32Array(count * 3);
   const positions = new Float32Array(count * 6);
   let seed = 86421;
@@ -458,19 +552,20 @@ function makeRainStreaks(isMobile) {
   return rain;
 }
 
-function updateRainStreaks(rain, weather, wind, windDirection, delta) {
-  if (weather === 'clear') {
+function updateRainStreaks(rain, weather, wind, windDirection, delta, intensity = 1) {
+  if (!['rain', 'typhoon', 'thunderstorm'].includes(weather)) {
     rain.visible = false;
     return;
   }
-  const typhoon = weather === 'typhoon';
-  rain.visible = true;
-  rain.material.opacity = typhoon ? 0.62 : 0.38;
-  const fallSpeed = typhoon ? 23 : 14;
-  const slant = wind * (typhoon ? 0.16 : 0.08);
+const typhoon = weather === 'typhoon';
+      const storm = weather === 'thunderstorm';
+      rain.visible = true;
+      rain.material.opacity = Math.min(0.48, (typhoon ? 0.33 : storm ? 0.3 : 0.24) * intensity);
+      const fallSpeed = (typhoon ? 23 : storm ? 20 : 14) * (0.7 + intensity * 0.25);
+      const slant = wind * (typhoon ? 0.16 : storm ? 0.12 : 0.08);
   const directionX = windDirection === 'front' ? 1 : 0;
   const directionZ = windDirection === 'left' ? 1 : windDirection === 'right' ? -1 : 0;
-  const length = typhoon ? 1.7 : 0.9;
+  const length = (typhoon ? 0.46 : 0.3) * (0.8 + intensity * 0.2);
   const bases = rain.userData.bases;
   const positions = rain.geometry.attributes.position.array;
   for (let index = 0; index < rain.userData.count; index += 1) {
@@ -494,7 +589,45 @@ function updateRainStreaks(rain, weather, wind, windDirection, delta) {
   rain.geometry.attributes.position.needsUpdate = true;
 }
 
-function makeEnvironment() {
+function makeSnowflakes(isMobile) {
+      const count = isMobile ? 90 : 210;
+      const positions = new Float32Array(count * 3);
+      for (let i = 0; i < count; i += 1) {
+        positions[i * 3] = Math.random() * 78 - 16;
+        positions[i * 3 + 1] = Math.random() * 15;
+        positions[i * 3 + 2] = Math.random() * 38 - 19;
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const material = new THREE.PointsMaterial({ color: '#ffffff', size: 0.13, transparent: true, opacity: 0.9, depthWrite: false });
+      const snow = new THREE.Points(geometry, material);
+      snow.frustumCulled = false;
+      snow.visible = false;
+      return snow;
+    }
+
+    function updateSnowflakes(snow, weather, wind, windDirection, delta, time, intensity = 1) {
+      snow.visible = weather === 'snow';
+  if (!snow.visible) return;
+  snow.material.opacity = Math.min(1, 0.55 + intensity * 0.22);
+  snow.material.size = 0.09 + intensity * 0.05;
+  const positions = snow.geometry.attributes.position.array;
+      const driftX = windDirection === 'front' ? wind * 0.22 : 0;
+      const driftZ = windDirection === 'left' ? Math.abs(wind) * 0.22 : windDirection === 'right' ? -Math.abs(wind) * 0.22 : 0;
+      for (let i = 0; i < positions.length; i += 3) {
+        positions[i] += (driftX + Math.sin(time * 0.0015 + i) * 0.3) * delta;
+        positions[i + 1] -= (1.2 + (i % 9) * 0.13) * delta * (0.6 + intensity * 0.3);
+        positions[i + 2] += (driftZ + Math.cos(time * 0.001 + i) * 0.2) * delta;
+        if (positions[i + 1] < 0) positions[i + 1] = 14;
+        if (positions[i] > 70) positions[i] = -16;
+        if (positions[i] < -16) positions[i] = 70;
+        if (positions[i + 2] > 19) positions[i + 2] = -19;
+        if (positions[i + 2] < -19) positions[i + 2] = 19;
+      }
+      snow.geometry.attributes.position.needsUpdate = true;
+    }
+
+    function makeEnvironment() {
   const environment = new THREE.Group();
   const road = new THREE.Mesh(
     new THREE.PlaneGeometry(90, 4.2),
@@ -680,11 +813,13 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
     scene.add(windStreaks);
     const rainStreaks = makeRainStreaks(el.clientWidth < 760);
     scene.add(rainStreaks);
-    sceneRef.current = {
+        const snowflakes = makeSnowflakes(el.clientWidth < 760);
+        scene.add(snowflakes);
+        sceneRef.current = {
       scene, camera, renderer, controls, plane, clips, pathLine, pathMaterial,
       propeller,
       previousPathLine, previousPathMaterial, forceGroup, forceArrows,
-      windStreaks, rainStreaks, windSpeed: 0, windDirection: 'front', weather: 'clear',
+      windStreaks, rainStreaks, snowflakes, windSpeed: 0, windDirection: 'front', weather: 'clear', weatherLevel: 1, haze: false, lightningRate: 0.5,
       hemisphere, sun, ground, trees,
       cameraGoal: camera.position.clone(), targetGoal: controls.target.clone(),
       isFlying: false, raf: 0, flightRaf: 0
@@ -701,7 +836,10 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
     const weatherLooks = {
       clear: { sky: new THREE.Color('#dfeee8'), ground: new THREE.Color('#e5f0df'), sun: 3.2, hemisphere: 2.3, roughness: 1 },
       rain: { sky: new THREE.Color('#a9bec2'), ground: new THREE.Color('#c6d7c0'), sun: 1.45, hemisphere: 1.6, roughness: 0.72 },
-      typhoon: { sky: new THREE.Color('#5d7076'), ground: new THREE.Color('#91a997'), sun: 0.65, hemisphere: 1.05, roughness: 0.48 }
+      typhoon: { sky: new THREE.Color('#5d7076'), ground: new THREE.Color('#91a997'), sun: 0.65, hemisphere: 1.05, roughness: 0.48, fogNear: 45, fogFar: 120 },
+          snow: { sky: new THREE.Color('#c5d6df'), ground: new THREE.Color('#e5ebed'), sun: 1.85, hemisphere: 2.0, roughness: 0.95, fogNear: 35, fogFar: 95 },
+          fog: { sky: new THREE.Color('#c3ccca'), ground: new THREE.Color('#bfcfca'), sun: 1.25, hemisphere: 1.65, roughness: 0.88, fogNear: 6, fogFar: 30 },
+          thunderstorm: { sky: new THREE.Color('#495b6a'), ground: new THREE.Color('#819896'), sun: 0.45, hemisphere: 0.85, roughness: 0.5, fogNear: 22, fogFar: 75 }
     };
     let previousFrame = performance.now();
     const animate = () => {
@@ -710,17 +848,39 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
       previousFrame = now;
       const state = sceneRef.current;
       updateWindStreaks(state.windStreaks, state.windSpeed, state.windDirection, delta);
-      updateRainStreaks(state.rainStreaks, state.weather, state.windSpeed, state.windDirection, delta);
+      const intensity = weather_v2_profiles[state.weather]?.[state.weatherLevel]?.intensity ?? 1;
+          updateRainStreaks(state.rainStreaks, state.weather, state.windSpeed, state.windDirection, delta, intensity);
+          updateSnowflakes(state.snowflakes, state.weather, state.windSpeed, state.windDirection, delta, now, intensity);
+          state.windStreaks.visible = false;
       const look = weatherLooks[state.weather];
-      scene.background.lerp(look.sky, 0.035);
-      scene.fog.color.lerp(look.sky, 0.035);
-      state.ground.material.color.lerp(look.ground, 0.035);
+      const targetSky = state.weather === 'fog' && state.haze ? new THREE.Color('#c0ac86') : look.sky;
+          const sunshine = state.weather === 'clear' ? [0.65, 1, 1.25, 1.52][state.weatherLevel ?? 1] : 1;
+          const skyColor = state.weather === 'clear'
+            ? targetSky.clone().lerp(new THREE.Color('#ffffff'), [0, 0.03, 0.16, 0.3][state.weatherLevel ?? 1])
+            : targetSky;
+          state.renderer.toneMappingExposure = THREE.MathUtils.lerp(
+            state.renderer.toneMappingExposure,
+            state.weather === 'clear' ? [0.75, 1, 1.23, 1.45][state.weatherLevel ?? 1] : 1,
+            0.05
+          );
+          scene.background.lerp(skyColor, 0.035);
+      scene.fog.color.lerp(targetSky, 0.035);
+          const fogNear = state.weather === 'fog' ? Math.max(1, 20 - intensity * 9) : look.fogNear ?? 45;
+          const fogFar = state.weather === 'fog' ? Math.max(9, 64 - intensity * 25) : look.fogFar ?? 120;
+          scene.fog.near = THREE.MathUtils.lerp(scene.fog.near, fogNear, 0.035);
+          scene.fog.far = THREE.MathUtils.lerp(scene.fog.far, fogFar, 0.035);
+      state.ground.material.color.lerp(state.weather === 'fog' && state.haze ? new THREE.Color('#a9a087') : look.ground, 0.035);
       state.ground.material.roughness = THREE.MathUtils.lerp(state.ground.material.roughness, look.roughness, 0.04);
-      state.sun.intensity = THREE.MathUtils.lerp(state.sun.intensity, look.sun, 0.04);
+      state.sun.intensity = THREE.MathUtils.lerp(state.sun.intensity, state.weather === 'clear' ? look.sun * sunshine : look.sun, 0.04);
       state.hemisphere.intensity = THREE.MathUtils.lerp(state.hemisphere.intensity, look.hemisphere, 0.04);
-      const swayStrength = state.weather === 'typhoon' ? 0.075 : state.weather === 'rain' ? 0.012 : 0;
+      const swayStrength = state.weather === 'typhoon' ? 0.075 : state.weather === 'thunderstorm' ? 0.05 : state.weather === 'snow' ? 0.017 : state.weather === 'rain' ? 0.012 : 0;
+          const flash = state.weather === 'thunderstorm' && Math.sin(now * 0.0017 * (0.8 + state.lightningRate)) > (0.999 - state.lightningRate * 0.025) && Math.sin(now * 0.0061) > 0.15;
+          if (flash) {
+            state.sun.intensity = 4.6;
+            state.hemisphere.intensity = 3.0;
+          }
       state.trees.forEach((tree, index) => {
-        const windLean = state.weather === 'typhoon' ? state.windSpeed * 0.0035 : 0;
+        const windLean = ['typhoon', 'thunderstorm'].includes(state.weather) ? state.windSpeed * 0.0035 : 0;
         const sway = windLean + Math.sin(now * 0.004 + tree.userData.swayPhase + index) * swayStrength;
         tree.rotation.z = THREE.MathUtils.lerp(tree.rotation.z, sway, 0.08);
       });
@@ -744,7 +904,9 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
       cancelAnimationFrame(sceneRef.current?.flightRaf);
       controls.dispose();
       renderer.dispose();
-      el.removeChild(renderer.domElement);
+          snowflakes.geometry.dispose();
+          snowflakes.material.dispose();
+          el.removeChild(renderer.domElement);
     };
   }, []);
 
@@ -813,10 +975,16 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
     if (!sceneRef.current) return;
     const state = sceneRef.current;
     state.weather = settings.weather;
+        state.weatherLevel = settings.weatherLevel ?? 1;
+        state.haze = Boolean(settings.haze);
+        state.lightningRate = settings.lightningRate ?? 0.5;
     const looks = {
       clear: { sky: '#dfeee8', ground: '#e5f0df', sun: 3.2, hemisphere: 2.3, roughness: 1 },
       rain: { sky: '#a9bec2', ground: '#c6d7c0', sun: 1.45, hemisphere: 1.6, roughness: 0.72 },
-      typhoon: { sky: '#5d7076', ground: '#91a997', sun: 0.65, hemisphere: 1.05, roughness: 0.48 }
+      typhoon: { sky: '#5d7076', ground: '#91a997', sun: 0.65, hemisphere: 1.05, roughness: 0.48 },
+          snow: { sky: '#c5d6df', ground: '#e5ebed', sun: 1.85, hemisphere: 2.0, roughness: 0.95 },
+          fog: { sky: '#c3ccca', ground: '#bfcfca', sun: 1.25, hemisphere: 1.65, roughness: 0.88 },
+          thunderstorm: { sky: '#495b6a', ground: '#819896', sun: 0.45, hemisphere: 0.85, roughness: 0.5 }
     };
     const look = looks[settings.weather];
     state.scene.background.set(look.sky);
@@ -825,7 +993,7 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
     state.ground.material.roughness = look.roughness;
     state.sun.intensity = look.sun;
     state.hemisphere.intensity = look.hemisphere;
-  }, [settings.weather]);
+  }, [settings.weather, settings.weatherLevel, settings.haze, settings.lightningRate]);
 
   useEffect(() => {
     if (!sceneRef.current || sceneRef.current.isFlying) return;
@@ -947,7 +1115,7 @@ function FlightScene({ settings, flightRequest, replayResult, onResult, onFlight
       const motionFade = Math.sin(progress * Math.PI);
       const rollStrength = clamp((1 - result.stability) * 0.075 + Math.abs(settings.wind) * 0.006, 0.004, 0.075);
       const naturalMotion = Math.sin(progress * Math.PI * 3) * rollStrength * motionFade;
-      const stormShake = settings.weather === 'typhoon' ? (p.turbulence || 0) * 0.035 * motionFade : 0;
+      const stormShake = ['typhoon', 'thunderstorm', 'snow'].includes(settings.weather) ? (p.turbulence || 0) * 0.035 * motionFade : 0;
       const roll = (p.roll || 0) + naturalMotion + stormShake;
       paperModel.rotation.x = -Math.PI / 2 + roll;
       pathLine.geometry.setDrawRange(0, Math.max(2, Math.ceil(progress * trailPoints.length)));
@@ -1013,7 +1181,11 @@ function Slider({ label, value, min, max, step = 1, unit, onChange, disabled = f
 }
 
 function App() {
-  const [settings, setSettings] = useState({ goal: 'far', clipCount: 1, clipPosition: 22, clipPlacement: 'body', throwAngle: 10, throwPower: 55, wind: 0, windDirection: 'front', weather: 'clear', airframe: { ...DEFAULT_AIRFRAME }, propeller: { ...DEFAULT_PROPELLER } });
+  const [settings, setSettings] = useState({ weatherLevel: 1, haze: false, lightningRate: 0.5, goal: 'far', clipCount: 1, clipPosition: 22, clipPlacement: 'body', throwAngle: 10, throwPower: 55, wind: 0, windDirection: 'front', weather: 'clear', airframe: { ...DEFAULT_AIRFRAME }, propeller: { ...DEFAULT_PROPELLER } });
+  const [livePlace, setLivePlace] = useState('桃園');
+  const [liveStatus, setLiveStatus] = useState('');
+  const [liveMode, setLiveMode] = useState(false);
+  const [liveRefresh, setLiveRefresh] = useState(0);
   const [flightRequest, setFlightRequest] = useState({ id: 0, mode: 'launch' });
   const [result, setResult] = useState(null);
   const [previousResult, setPreviousResult] = useState(null);
@@ -1096,11 +1268,53 @@ function App() {
     setPredictionFeedback(null);
   };
 
-  const setWeatherMode = weather => {
+  useEffect(() => {
+        if (!liveMode) return;
+        let active = true;
+        const loadWeather = async () => {
+          const place = weatherPlaces.find(item => item.name === livePlace);
+          if (!place) return;
+          setLiveStatus('正在讀取最新天氣…');
+          try {
+            const params = new URLSearchParams({
+              latitude: String(place.lat), longitude: String(place.lon),
+              current: 'weather_code,precipitation,wind_speed_10m,wind_direction_10m,visibility',
+              wind_speed_unit: 'ms', timezone: 'Asia/Taipei', forecast_days: '1'
+            });
+            const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`, { cache: 'no-store' });
+            if (!response.ok) throw new Error('API unavailable');
+            const data = await response.json();
+            if (!data.current || !active) return;
+            const current = data.current;
+            const weather = classifyLiveWeather(current);
+            const wind = clamp(Number(current.wind_speed_10m ?? 0), 0, 10);
+            const level = wind >= 8 || (current.precipitation ?? 0) >= 8 ? 3 : wind >= 5 || (current.precipitation ?? 0) >= 3 ? 2 : 1;
+            const bearing = current.wind_direction_10m ?? 0;
+            setSettings(previous => ({ ...previous, weather, weatherLevel: level,
+              wind, windDirection: bearing > 45 && bearing < 180 ? 'left' : bearing >= 180 && bearing < 315 ? 'right' : 'front' }));
+            setLiveStatus(`${place.name}｜資料時間 ${current.time.replace('T', ' ')}｜風速 ${Number(current.wind_speed_10m ?? 0).toFixed(1)} m/s｜降水 ${current.precipitation ?? 0} mm`);
+          } catch {
+            if (active) setLiveStatus('無法取得天氣資料，請確認網路後再試。');
+          }
+        };
+        loadWeather();
+        const timer = window.setInterval(loadWeather, 10 * 60 * 1000);
+        return () => { active = false; window.clearInterval(timer); };
+      }, [liveMode, livePlace, liveRefresh]);
+
+      const setWeatherLevel = level => {
+        setSettings(current => ({ ...current, weatherLevel: level, wind: weather_v2_profiles[current.weather][level].wind }));
+        setPrediction(null);
+        setPredictionFeedback(null);
+      };
+
+      const setWeatherMode = weather => {
+        setLiveMode(false);
     setSettings(current => ({
       ...current,
       weather,
-      wind: weather === 'typhoon' ? 10 : weather === 'clear' ? 0 : current.wind
+      weatherLevel: 1,
+      wind: weather_v2_profiles[weather][1].wind
     }));
     setPrediction(null);
     setPredictionFeedback(null);
@@ -1125,7 +1339,8 @@ function App() {
   };
 
   const reset = () => {
-    setSettings({ goal: 'far', clipCount: 1, clipPosition: 22, clipPlacement: 'body', throwAngle: 10, throwPower: 55, wind: 0, windDirection: 'front', weather: 'clear', airframe: { ...DEFAULT_AIRFRAME }, propeller: { ...DEFAULT_PROPELLER } });
+    setLiveMode(false);
+    setSettings({ weatherLevel: 1, haze: false, lightningRate: 0.5, goal: 'far', clipCount: 1, clipPosition: 22, clipPlacement: 'body', throwAngle: 10, throwPower: 55, wind: 0, windDirection: 'front', weather: 'clear', airframe: { ...DEFAULT_AIRFRAME }, propeller: { ...DEFAULT_PROPELLER } });
     setResult(null);
     setPreviousResult(null);
     setPrediction(null);
@@ -1300,8 +1515,28 @@ function App() {
             <button className={settings.weather === 'clear' ? 'selected' : ''} onClick={() => setWeatherMode('clear')}><Sun size={15} />晴天</button>
             <button className={settings.weather === 'rain' ? 'selected' : ''} onClick={() => setWeatherMode('rain')}><CloudRain size={15} />下雨</button>
             <button className={settings.weather === 'typhoon' ? 'selected' : ''} onClick={() => setWeatherMode('typhoon')}><Wind size={15} />颱風</button>
+                <button className={settings.weather === 'snow' ? 'selected' : ''} onClick={() => setWeatherMode('snow')}><Snowflake size={15} />下雪</button>
+                <button className={settings.weather === 'fog' ? 'selected' : ''} onClick={() => setWeatherMode('fog')}><CloudFog size={15} />濃霧</button>
+                <button className={settings.weather === 'thunderstorm' ? 'selected' : ''} onClick={() => setWeatherMode('thunderstorm')}><CloudLightning size={15} />雷雨</button>
           </div>
-          {settings.weather === 'typhoon' && <p className="typhoon-warning">颱風模式：強風 10 m/s、斜向暴雨、陣風亂流與不規則側翻。</p>}
+          <div className="weather-settings">
+                <label htmlFor="weather-level">天氣強度</label>
+                <select id="weather-level" value={settings.weatherLevel ?? 1} onChange={event => setWeatherLevel(Number(event.target.value))}>
+                  {weather_v2_profiles[settings.weather].map((item, index) => <option key={index} value={index}>{item.label}</option>)}
+                </select>
+                {settings.weather === 'fog' && <label className="weather-check"><input type="checkbox" checked={Boolean(settings.haze)} onChange={event => update('haze', event.target.checked)} /> 偏黃霾霧效果</label>}
+                {settings.weather === 'thunderstorm' && <label className="weather-extra">落雷頻率
+                  <input type="range" min="0.2" max="1.8" step="0.2" value={settings.lightningRate ?? 0.5} onChange={event => update('lightningRate', Number(event.target.value))} />
+                  <small>{(settings.lightningRate ?? 0.5) < 0.7 ? '偶發' : (settings.lightningRate ?? 0.5) < 1.3 ? '頻繁' : '非常頻繁'}</small>
+                </label>}
+                <p className="weather-description">{weatherProfiles[settings.weather].description}<span>目前風速 {settings.wind} m/s；{weather_v2_profiles[settings.weather][settings.weatherLevel ?? 1].label}</span></p>
+                <div className="weather-science"><b>天氣科普</b><p>{weatherKnowledge[settings.weather]}</p><b>對飛行的影響</b><p>{settings.weather === 'fog' ? '能見度下降；風速仍決定飛行偏移。' : settings.weather === 'clear' ? '陽光強弱主要影響光照，烈日加入微弱熱對流。' : settings.weather === 'snow' ? '雪越大，風與亂流擾動越明顯。' : settings.weather === 'rain' ? '雨勢越強，飛行軌跡會受到越明顯的亂流擾動。' : settings.weather === 'typhoon' ? '隨風速及颱風強度增加，飛機更容易側翻和偏離。' : '落雷視覺頻率與風暴強度可分別調整；亂流會影響高度和姿態。'}</p></div>
+              </div>
+              <div className="weather-live">
+                <label className="weather-check"><input type="checkbox" checked={liveMode} onChange={event => setLiveMode(event.target.checked)} /> 使用即時天氣模擬</label>
+                {liveMode && <><div className="weather-live-row"><select aria-label="城市" value={livePlace} onChange={event => setLivePlace(event.target.value)}>{weatherPlaces.map(place => <option key={place.name} value={place.name}>{place.name}</option>)}</select><button type="button" onClick={() => setLiveRefresh(n => n + 1)}>立即更新</button></div><p>{liveStatus}</p><small>來源：Open-Meteo。頁面開啟時讀取並每 10 分鐘更新；依測站附近的模式格點資料近似分類，非氣象署颱風警報。</small></>}
+              </div>
+              {settings.weather === 'typhoon' && <p className="typhoon-warning">颱風模式：強風 10 m/s、斜向暴雨、陣風亂流與不規則側翻。</p>}
         </section>
 
         {result && <section className="prediction-section">
