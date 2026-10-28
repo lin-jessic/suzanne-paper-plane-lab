@@ -266,3 +266,76 @@ input[type='range']:disabled { cursor: not-allowed; }
     .weather-live p, .weather-live small { color: #55736b; font-size: 10px; line-height: 1.5; }
     .weather-live p { margin: 8px 0 4px; }
 
+/* Daily challenge and refreshed mode landing panel */
+.challenge-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.challenge-nav button:first-child { --nav-bg: #367b67; --nav-active: #245b49; }
+.challenge-nav button:nth-child(2) { --nav-bg: #b94716; --nav-active: #87320e; }
+.challenge-nav button:nth-child(3) { --nav-bg: #28788a; --nav-active: #1c5967; }
+.challenge-nav button:nth-child(4) { --nav-bg: #245b9b; --nav-active: #193e6a; }
+.mode-home { padding-top: 8px !important; }
+.mode-hero { position: relative; overflow: hidden; margin: -8px -8px 16px; padding: 22px 17px 20px; border-radius: 12px; color: #f4fff9; background: radial-gradient(circle at 92% 6%, rgba(202, 233, 191, .42), transparent 34%), linear-gradient(135deg, #124f41, #247e67 66%, #67a78b); }
+.mode-hero::after { content: '✈'; position: absolute; right: 14px; bottom: -21px; color: rgba(255,255,255,.15); font-size: 96px; transform: rotate(-16deg); }
+.mode-hero > span, .daily-banner-heading > span { color: #bfe8ce; font-size: 9px; font-weight: 800; letter-spacing: .16em; }
+.mode-hero h1 { position: relative; z-index: 1; margin: 7px 0 5px; font-size: 23px; }
+.mode-hero p { position: relative; z-index: 1; margin: 0; color: #e0f1e8; font-size: 11px; line-height: 1.6; }
+.mode-card { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 8px 10px; margin: 10px 0; padding: 13px; border: 1px solid #d6e3dd; border-radius: 10px; background: linear-gradient(120deg, #fff, #f7fbf8); box-shadow: 0 4px 12px rgba(30, 69, 54, .055); }
+.mode-card .mode-icon { grid-row: span 2; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; background: #e4f2eb; color: #17694f; font-size: 21px; }
+.mode-card strong { color: #214e3f; font-size: 13px; }
+.mode-card p { margin: 3px 0 0; color: #698077; font-size: 10px; line-height: 1.55; }
+.mode-card button { grid-column: 2; width: 100%; min-height: 34px; border: 0; border-radius: 6px; background: #17694f; color: #fff; font-size: 10px; font-weight: 800; }
+.daily-mode-card { border-color: #c5ded6; background: linear-gradient(120deg, #eff8f5, #fff); }
+.daily-mode-card .mode-icon { background: #d7eee8; color: #137885; }
+.daily-mode-card button { background: #16788a; }
+.levels-mode-card .mode-icon { background: #fff0df; color: #bb6226; }
+.levels-mode-card button { background: #b45a20; }
+.quick-start { margin-top: 14px; padding: 11px 12px; border: 1px dashed #c2d8ce; border-radius: 8px; color: #537369; background: rgba(232, 244, 238, .74); font-size: 10px; }
+.quick-start strong { color: #28644f; }
+.quick-start ol { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 7px 0 0; padding-left: 17px; line-height: 1.45; }
+.daily-banner { border-color: #a9d4d2 !important; background: linear-gradient(145deg, #eaf8f5, #f7fbf8) !important; }
+.daily-banner-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 7px; border-bottom: 1px solid #cfe5e0; }
+.daily-banner-heading > span { color: #278092; }
+.daily-banner-heading > strong { color: #476d69; font-size: 10px; }
+.daily-banner p { margin: 8px 0; }
+.daily-banner p b { color: #126b61; }
+.daily-score { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0 6px; }
+.daily-score span { padding: 8px; border-radius: 7px; background: rgba(255,255,255,.82); color: #658178; font-size: 9px; }
+.daily-score strong { display: block; margin-top: 3px; color: #215c4d; font-size: 14px; }
+.daily-banner small { color: #69847b; }
+.level-hint { margin: 8px 0 10px; padding: 8px 9px; border-radius: 6px; color: #496a60; background: #eff6f2; font-size: 10px; line-height: 1.6; }
+.level-hint summary { cursor: pointer; color: #17694f; font-weight: 800; }
+.level-hint p { margin: 6px 0 0; }
+.failure-explanation { margin-top: 10px; padding: 10px 11px; border-left: 3px solid #cb513d; border-radius: 6px; background: #fff0eb; color: #75483e; }
+.failure-explanation strong { color: #9e3a2d; font-size: 11px; }
+.failure-explanation p { margin: 5px 0 0; }
+.success-note { color: #126b4d; font-weight: 800; }
+.icon-button:hover:not(:disabled), .force-toggle:hover { border-color: #6ba78e; background: #f1f8f4; }
+.level-card { box-shadow: 0 4px 14px rgba(29, 67, 52, .045); }
+.challenge-outcome { box-shadow: 0 5px 15px rgba(95, 75, 24, .07); }
+
+@media (min-width: 761px) and (max-width: 1040px) {
+  .control-panel { width: min(310px, calc(100vw - 30px)); padding: 16px; }
+  .view-modes, .telemetry { left: 340px; }
+  .telemetry { right: 12px; grid-template-columns: repeat(3, minmax(0, .8fr)) minmax(0, 1.5fr); gap: 7px; padding: 12px; }
+  .telemetry strong { font-size: 20px; }
+  .topbar { gap: 11px; padding: 0 15px; }
+}
+
+@media (max-width: 760px) {
+  .topbar { gap: 8px; padding: 0 12px; }
+  .scene { height: clamp(270px, 41dvh, 430px); min-height: 270px; }
+  .control-panel { max-width: 680px; margin: -12px auto 0; padding: 15px; border-radius: 12px; }
+  .challenge-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
+  .challenge-nav button { justify-content: center; min-height: 40px; padding: 7px 4px; font-size: 11px; text-align: center; }
+  .challenge-nav span { display: none; }
+  .mode-hero { padding: 18px 15px; }
+  .mode-hero h1 { font-size: 21px; }
+}
+
+@media (max-width: 390px) {
+  .mode-card { grid-template-columns: 34px minmax(0, 1fr); gap: 7px; padding: 11px; }
+  .mode-card .mode-icon { width: 32px; height: 32px; }
+  .mode-card button { min-height: 36px; }
+  .weather-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .challenge-nav button { font-size: 10px; }
+}
+

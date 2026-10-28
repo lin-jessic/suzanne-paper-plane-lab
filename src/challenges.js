@@ -1,4 +1,51 @@
 export const PROGRESS_KEY = 'suzanne-challenges-v1';
+export const DAILY_KEY = 'suzanne-daily-v1';
+
+const DAILY_WEATHER = ['clear', 'rain', 'snow', 'fog', 'typhoon', 'thunderstorm'];
+const DAILY_DIRECTIONS = ['front', 'left', 'right'];
+
+export function getDailyChallenge(date = new Date()) {
+  const dateKey = typeof date === 'string' ? date : new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(date);
+  let seed = [...dateKey].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) >>> 0, 17);
+  const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const weather = DAILY_WEATHER[Math.floor(random() * DAILY_WEATHER.length)];
+  const direction = DAILY_DIRECTIONS[Math.floor(random() * DAILY_DIRECTIONS.length)];
+  const wind = 1 + Math.floor(random() * 8);
+  const target = Number((7 + random() * 6).toFixed(1));
+  const obstacle = { x: 8 + Math.floor(random() * 8), y: 1.4 + random() * 2.2, z: random() > 0.5 ? 1 : -1, width: 1.35, height: 1.8 };
+  return { date: dateKey, weather, direction, wind, target, obstacle, weatherLevel: Math.min(3, Math.max(0, Math.floor(random() * 4))) };
+}
+
+export function loadDailyRecord(storage, date) {
+  try {
+    const saved = JSON.parse(storage.getItem(DAILY_KEY) ?? '{}');
+    if (saved.date !== date) return { date, attempts: 0, best: null };
+    return {
+      date,
+      attempts: Number.isSafeInteger(saved.attempts) && saved.attempts >= 0 ? saved.attempts : 0,
+      best: Number.isSafeInteger(saved.best) && saved.best > 0 ? saved.best : null
+    };
+  } catch { return { date, attempts: 0, best: null }; }
+}
+
+export function recordDailyAttempt(record, result, target) {
+  const attempts = record.attempts + 1;
+  const success = !result.collision && result.distance >= target;
+  return {
+    record: { date: record.date, attempts, best: success ? Math.min(record.best ?? attempts, attempts) : record.best },
+    success
+  };
+}
+
+export function collidesWithObstacle(points, obstacle) {
+  return Boolean(obstacle && points.some(point =>
+    Math.abs(point.x - obstacle.x) <= obstacle.width / 2 &&
+    Math.abs(point.y - obstacle.y) <= obstacle.height / 2 &&
+    Math.abs(point.z - obstacle.z) <= 0.9
+  ));
+}
 
 export const LEVELS = [
   { id: 1, name: '起飛練習', goal: 'far', weather: 'clear', wind: 0, direction: 'front', metric: 'distance', thresholds: [5, 7, 9], unit: '公尺', achievement: '起飛新手', environment: '晴天・無風', instruction: '調整角度與力道，讓飛機飛得更遠。' },
