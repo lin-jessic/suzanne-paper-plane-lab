@@ -1450,6 +1450,16 @@ function App() {
     setPanelView('flight');
   };
 
+  const returnToModeHome = () => {
+    if (isAnimating) return;
+    reset();
+    setActiveLevel(null);
+    setActiveMode('free');
+    setMenuHidden(false);
+    setSelectedStage(1);
+    setPanelView('home');
+  };
+
   return (
     <main className={`app-shell ${menuHidden && panelView === 'flight' ? 'menu-is-hidden' : ''}`}>
       <FlightScene settings={settings} flightRequest={flightRequest} replayResult={result} onResult={handleResult} onFlightComplete={handleFlightComplete} onFlightState={setIsAnimating} onFlightEvent={setFlightEvent} showForces={showForces} cameraMode={cameraMode} cameraLocked={cameraLocked} cameraResetRequest={cameraResetRequest} />
@@ -1490,7 +1500,7 @@ function App() {
 
       <aside id="flight-operation-panel" ref={panelRef} className={`control-panel ${isAnimating ? 'is-flying' : ''} ${menuHidden ? 'menu-hidden' : ''}`} aria-busy={isAnimating}>
         <nav className="challenge-nav" aria-label="遊戲模式與成就">
-          <button disabled={isAnimating} aria-pressed={panelView === 'home'} onClick={() => { setActiveLevel(null); setActiveMode('free'); setMenuHidden(false); setPanelView('home'); }}>⌂ 模式首頁<span>選擇玩法</span></button>
+          <button disabled={isAnimating} aria-pressed={panelView === 'home'} onClick={returnToModeHome}>⌂ 模式首頁<span>選擇玩法</span></button>
           <button disabled={isAnimating} aria-pressed={panelView === 'levels'} onClick={() => { setSelectedStage(1); setMenuHidden(false); setPanelView('levels'); }}>⚑ 關卡挑戰<span>3 階段・30 關</span></button>
           <button disabled={isAnimating} aria-pressed={activeMode === 'daily' && panelView === 'flight'} onClick={startDaily}>✦ 每日挑戰<span>今日固定環境</span></button>
           <button disabled={isAnimating} aria-pressed={panelView === 'achievements'} onClick={() => { setSelectedStage(1); setMenuHidden(false); setPanelView('achievements'); }}>🏅 成就紀錄<span>{getAchievementCount(progress).earned} / {getAchievementCount(progress).total}</span></button>
