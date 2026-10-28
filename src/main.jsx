@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { Brain, CheckCircle2, CloudFog, CloudLightning, CloudRain, Crosshair, Eye, EyeOff, Gauge, Info, Lock, Plane, Rewind, RotateCcw, Ruler, Scale, Snowflake, Sparkles, Sun, Unlock, Wind } from 'lucide-react';
+import { Brain, CheckCircle2, CloudFog, CloudLightning, CloudRain, Crosshair, Eye, EyeOff, Gauge, Info, Lock, PanelLeftClose, PanelLeftOpen, Plane, Rewind, RotateCcw, Ruler, Scale, Snowflake, Sparkles, Sun, Unlock, Wind } from 'lucide-react';
 import './styles.css';
-import { LEVELS, PROGRESS_KEY, DAILY_KEY, loadProgress, isUnlocked, rateFlight, recordFlight, starRule, getDailyChallenge, loadDailyRecord, recordDailyAttempt, collidesWithObstacle } from './challenges.js';
+import { LEVELS, STAGES, PROGRESS_KEY, DAILY_KEY, loadProgress, isUnlocked, rateFlight, recordFlight, starRule, getDailyChallenge, loadDailyRecord, recordDailyAttempt, collidesWithObstacle, getAchievementCount } from './challenges.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const WORLD_X_SCALE = 1.25;
@@ -1204,18 +1204,29 @@ function Slider({ label, value, min, max, step = 1, unit, onChange, disabled = f
   );
 }
 
+function levelHint(level) {
+  if (level.obstacle) return '先觀察障礙物的高度與左右位置，再微調仰角和配重，避開碰撞。';
+  if (level.metric === 'deviation') return '先達到最低距離，再依側風方向微調左右配重與翼端平衡。';
+  if (level.metric === 'peak') return '增加仰角並觀察翼型帶來的升力變化，逐步接近高度目標。';
+  if (level.stage === 1) return '從仰角、力道和迴紋針配重開始，每次只改一項並比較距離。';
+  if (level.stage === 2) return '先設定配重，再微調翼展或翼端，觀察飛行距離與穩定度。';
+  return '整合機翼、配重和螺旋槳，留意推力增加時重心與阻力也會改變。';
+}
+
 function App() {
   const [progress, setProgress] = useState(() => { try { return loadProgress(window.localStorage); } catch { return {}; } });
   const [storageWarning, setStorageWarning] = useState(false);
   const [panelView, setPanelView] = useState('home');
   const [activeMode, setActiveMode] = useState('free');
+  const [menuHidden, setMenuHidden] = useState(false);
+  const [selectedStage, setSelectedStage] = useState(1);
   const dailyChallenge = useMemo(() => getDailyChallenge(), []);
   const [dailyRecord, setDailyRecord] = useState(() => loadDailyRecord(window.localStorage, dailyChallenge.date));
   const [activeLevel, setActiveLevel] = useState(null);
   const [challengeResult, setChallengeResult] = useState(null);
   const panelRef = useRef(null);
   const outcomeRef = useRef(null);
-  useEffect(() => { if (panelRef.current) panelRef.current.scrollTop = 0; }, [panelView, activeLevel?.id]);
+  useEffect(() => { if (panelRef.current) panelRef.current.scrollTop = 0; }, [panelView, activeLevel?.id, selectedStage]);
   useEffect(() => { if (challengeResult) outcomeRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [challengeResult]);
   useEffect(() => {
     try { window.localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress)); setStorageWarning(false); }
@@ -1239,19 +1250,19 @@ function App() {
   const [flightEvent, setFlightEvent] = useState(null);
   const [returnPrompt, setReturnPrompt] = useState(false);
   const update = (key, value) => {
-    if (isAnimating || (activeMode === 'daily' && ['goal', 'weather', 'weatherLevel', 'wind', 'windDirection', 'haze', 'lightningRate'].includes(key)) || (activeLevel && (['goal', 'weather', 'weatherLevel', 'wind', 'windDirection', 'haze', 'lightningRate'].includes(key) || (activeLevel.id === 1 && ['clipCount', 'clipPosition', 'clipPlacement'].includes(key))))) return;
+    if (isAnimating || (activeMode === 'daily' && ['goal', 'weather', 'weatherLevel', 'wind', 'windDirection', 'haze', 'lightningRate'].includes(key)) || (activeLevel && ['goal', 'weather', 'weatherLevel', 'wind', 'windDirection', 'haze', 'lightningRate'].includes(key))) return;
     setSettings(current => ({ ...current, [key]: value }));
     setPrediction(null);
     setPredictionFeedback(null);
   };
   const updateAirframe = (key, value) => {
-    if (isAnimating || (activeLevel && activeLevel.id < 3)) return;
+    if (isAnimating || (activeLevel && activeLevel.stage < 2)) return;
     setSettings(current => ({ ...current, airframe: { ...current.airframe, [key]: value } }));
     setPrediction(null);
     setPredictionFeedback(null);
   };
   const updatePropeller = (key, value) => {
-    if (isAnimating || activeLevel) return;
+    if (isAnimating || (activeLevel && activeLevel.stage < 3)) return;
     setSettings(current => ({ ...current, propeller: { ...current.propeller, [key]: value } }));
     setPrediction(null);
     setPredictionFeedback(null);
@@ -1415,8 +1426,9 @@ function App() {
     reset();
     setActiveLevel(level);
     setActiveMode('levels');
+    setMenuHidden(false);
     setPanelView('flight');
-    setSettings(current => ({ ...current, goal: level.goal, weather: level.weather, weatherLevel: level.weather === 'rain' ? 0 : 1, wind: level.wind, windDirection: level.direction }));
+    setSettings(current => ({ ...current, goal: level.goal, weather: level.weather, weatherLevel: level.weatherLevel, wind: level.wind, windDirection: level.direction, obstacle: level.obstacle }));
   };
 
   const startDaily = () => {
@@ -1424,6 +1436,7 @@ function App() {
     reset();
     setActiveLevel(null);
     setActiveMode('daily');
+    setMenuHidden(false);
     setPanelView('flight');
     setSettings(current => ({ ...current, goal: 'far', weather: dailyChallenge.weather, weatherLevel: dailyChallenge.weatherLevel, wind: dailyChallenge.wind, windDirection: dailyChallenge.direction, obstacle: dailyChallenge.obstacle }));
   };
@@ -1433,15 +1446,27 @@ function App() {
     reset();
     setActiveLevel(null);
     setActiveMode('free');
+    setMenuHidden(false);
     setPanelView('flight');
   };
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${menuHidden && panelView === 'flight' ? 'menu-is-hidden' : ''}`}>
       <FlightScene settings={settings} flightRequest={flightRequest} replayResult={result} onResult={handleResult} onFlightComplete={handleFlightComplete} onFlightState={setIsAnimating} onFlightEvent={setFlightEvent} showForces={showForces} cameraMode={cameraMode} cameraLocked={cameraLocked} cameraResetRequest={cameraResetRequest} />
       <header className="topbar">
         <div className="brand"><Plane size={22} /><span>Suzanne <b>飛行實驗室</b></span></div>
         <div className="record">世界紀錄機型 · 教學模擬</div>
+        {panelView === 'flight' && <button
+          type="button"
+          className="menu-toggle"
+          aria-controls="flight-operation-panel"
+          aria-expanded={!menuHidden}
+          title={menuHidden ? '顯示操作面板' : '隱藏操作面板'}
+          onClick={() => setMenuHidden(value => !value)}
+        >
+          {menuHidden ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          <span>{menuHidden ? '顯示面板' : '隱藏面板'}</span>
+        </button>}
         <button className="force-toggle" aria-pressed={showForces} onClick={() => setShowForces(value => !value)}>
           {showForces ? <Eye size={17} /> : <EyeOff size={17} />}受力
         </button>
@@ -1463,51 +1488,74 @@ function App() {
         <strong>{flightEvent.label}</strong><span>{flightEvent.detail}</span>
       </div>}
 
-      <aside ref={panelRef} className={`control-panel ${isAnimating ? 'is-flying' : ''}`} aria-busy={isAnimating}>
+      <aside id="flight-operation-panel" ref={panelRef} className={`control-panel ${isAnimating ? 'is-flying' : ''} ${menuHidden ? 'menu-hidden' : ''}`} aria-busy={isAnimating}>
         <nav className="challenge-nav" aria-label="遊戲模式與成就">
-          <button disabled={isAnimating} aria-pressed={panelView === 'home'} onClick={() => { setActiveLevel(null); setActiveMode('free'); setPanelView('home'); }}>⌂ 模式首頁<span>選擇玩法</span></button>
-          <button disabled={isAnimating} aria-pressed={panelView === 'levels'} onClick={() => setPanelView('levels')}>⚑ 關卡挑戰<span>依序挑戰 5 關</span></button>
+          <button disabled={isAnimating} aria-pressed={panelView === 'home'} onClick={() => { setActiveLevel(null); setActiveMode('free'); setMenuHidden(false); setPanelView('home'); }}>⌂ 模式首頁<span>選擇玩法</span></button>
+          <button disabled={isAnimating} aria-pressed={panelView === 'levels'} onClick={() => { setSelectedStage(1); setMenuHidden(false); setPanelView('levels'); }}>⚑ 關卡挑戰<span>3 階段・30 關</span></button>
           <button disabled={isAnimating} aria-pressed={activeMode === 'daily' && panelView === 'flight'} onClick={startDaily}>✦ 每日挑戰<span>今日固定環境</span></button>
-          <button disabled={isAnimating} aria-pressed={panelView === 'achievements'} onClick={() => setPanelView('achievements')}>🏅 成就紀錄<span>{Object.values(progress).reduce((sum, item) => sum + Boolean(item.completedAt) + Boolean(item.masteredAt), 0)} / 10</span></button>
+          <button disabled={isAnimating} aria-pressed={panelView === 'achievements'} onClick={() => { setSelectedStage(1); setMenuHidden(false); setPanelView('achievements'); }}>🏅 成就紀錄<span>{getAchievementCount(progress).earned} / {getAchievementCount(progress).total}</span></button>
         </nav>
         {storageWarning && <p className="save-warning" role="status">瀏覽器無法保存進度，目前紀錄只保留至此頁關閉。</p>}
         {panelView === 'home' && <section className="mode-home">
           <div className="mode-hero"><span>SUZANNE FLIGHT LAB</span><h1>今天想怎麼飛？</h1><p>調整紙飛機，觀察每個條件如何改變飛行。</p></div>
           <article className="mode-card free-mode-card"><span className="mode-icon">✈</span><div><strong>自由實驗</strong><p>自己調整飛機與環境，先預測再試飛。</p></div><button onClick={enterFreeMode}>開始實驗</button></article>
           <article className="mode-card daily-mode-card"><span className="mode-icon">☀</span><div><strong>每日挑戰</strong><p>挑戰今天的固定天氣、風向、障礙物與目標距離。</p></div><button onClick={startDaily}>開始今日挑戰</button></article>
-          <article className="mode-card levels-mode-card"><span className="mode-icon">⚑</span><div><strong>五大關卡</strong><p>完成五個逐步解鎖的關卡，累積星級和成就。</p></div><button onClick={() => setPanelView('levels')}>瀏覽關卡</button></article>
+          <article className="mode-card levels-mode-card"><span className="mode-icon">⚑</span><div><strong>階段關卡</strong><p>三個階段、共 30 關，逐步解鎖配重、機型和螺旋槳調整。</p></div><button onClick={() => { setSelectedStage(1); setPanelView('levels'); }}>瀏覽關卡</button></article>
           <div className="quick-start"><strong>新手 3 步驟</strong><ol><li>選擇模式</li><li>調整一項飛行條件</li><li>試飛並比較結果</li></ol></div>
         </section>}
         {panelView === 'levels' && <section className="challenge-menu">
-          <h1>關卡挑戰</h1><p>取得 1 星即可解鎖下一關；可不限次數重試。</p>
-          {LEVELS.map(level => <article className="level-card" key={level.id}>
+          <h1>階段關卡</h1><p>共 30 關，取得至少 1 星即可解鎖下一關；每階段 10 關。</p>
+          <div className="stage-tabs" role="tablist" aria-label="選擇挑戰階段">
+            {STAGES.map(stage => {
+              const cleared = LEVELS.filter(level => level.stage === stage.id && (progress[level.id]?.stars ?? 0) > 0).length;
+              const unlocked = stage.id === 1 || isUnlocked(progress, stage.id * 10 - 9);
+              return <button key={stage.id} role="tab" aria-selected={selectedStage === stage.id} className={selectedStage === stage.id ? 'selected' : ''} onClick={() => setSelectedStage(stage.id)}>
+                <strong>{unlocked ? '' : '🔒 '}{stage.title}</strong><small>{cleared}/10 關</small>
+              </button>;
+            })}
+          </div>
+          {STAGES.filter(stage => stage.id === selectedStage).map(stage => <div className="stage-summary" key={stage.id}>
+            <strong>階段 {stage.id} · {stage.title}</strong><span>{stage.subtitle}</span>
+            <p>本階段開放：{stage.focus}</p>
+            <small>{stage.unlock}</small>
+          </div>)}
+          {LEVELS.filter(level => level.stage === selectedStage).map(level => <article className="level-card" key={level.id}>
             <div className="level-heading"><strong>{level.id}．{level.name}</strong><span aria-label={`最高 ${progress[level.id]?.stars ?? 0} 星`}>{'★'.repeat(progress[level.id]?.stars ?? 0)}{'☆'.repeat(3 - (progress[level.id]?.stars ?? 0))}</span></div>
             <small>{level.environment}</small><p>{level.instruction}</p>
             <ul>{level.thresholds.map((_, index) => <li key={index}>{starRule(level, index)}</li>)}</ul>
-            <details className="level-hint"><summary>新手提示</summary><p>{level.id === 1 ? '從投擲角度與力道開始，一次只改一個條件。' : level.id === 2 ? '適度調整配重，讓重心靠近機身建議區，再比較距離。' : level.id === 3 ? '機型調整會改變升力與穩定度，先試著增加翼展。' : level.id === 4 ? '側風會推動落點，調整左右配重平衡並觀察側偏。' : '雨勢會增加軌跡擾動，從穩定配重和投擲角度著手。'}</p></details>
+            <details className="level-hint"><summary>新手提示</summary><p>{levelHint(level)}</p></details>
             <button disabled={!isUnlocked(progress, level.id)} onClick={() => startLevel(level)}>{isUnlocked(progress, level.id) ? '開始挑戰' : `🔒 通過第 ${level.id - 1} 關後解鎖`}</button>
           </article>)}
           <button className="menu-back" onClick={() => setPanelView('flight')}>返回{activeLevel ? '目前挑戰' : '自由實驗'}</button>
           {activeLevel && <button className="menu-back" onClick={enterFreeMode}>離開挑戰，回到自由實驗</button>}
         </section>}
         {panelView === 'achievements' && <section className="challenge-menu">
-          <h1>成就紀錄</h1><p>紀錄保存在此瀏覽器；清除網站資料會移除紀錄。</p>
-          {!Object.values(progress).some(item => item.completedAt) && <p className="empty-achievements">還沒有成就，完成第一關就能取得「起飛新手」！</p>}
-          {LEVELS.map(level => <article className="level-card" key={level.id}>
+          <h1>階段成就</h1><p>30 個單關成就、30 個三星成就，以及 6 個階段成就。紀錄保存在此瀏覽器。</p>
+          <div className="stage-tabs" role="tablist" aria-label="選擇成就階段">
+            {STAGES.map(stage => <button key={stage.id} role="tab" aria-selected={selectedStage === stage.id} className={selectedStage === stage.id ? 'selected' : ''} onClick={() => setSelectedStage(stage.id)}><strong>{stage.title}</strong><small>{stage.subtitle}</small></button>)}
+          </div>
+          {STAGES.filter(stage => stage.id === selectedStage).map(stage => <React.Fragment key={stage.id}>
+            <div className="stage-achievements">
+              {[[`stage${stage.id}CompletedAt`, `${stage.title}・階段完成`], [`stage${stage.id}MasteredAt`, `${stage.title}・全關三星`]].map(([key, name]) => <div className={`achievement-item ${progress.achievements?.[key] ? 'earned' : ''}`} key={key}>
+                <strong>{progress.achievements?.[key] ? '🏆' : '🔒'} {name}</strong><small>{progress.achievements?.[key] ? `取得於 ${new Date(progress.achievements[key]).toLocaleDateString('zh-TW')}` : key.endsWith('CompletedAt') ? '本階段 10 關全部通過後取得' : '本階段 10 關全部取得 3 星後獲得'}</small>
+              </div>)}
+            </div>
+          {LEVELS.filter(level => level.stage === stage.id).map(level => <article className="level-card" key={level.id}>
             <div className="level-heading"><strong>{level.id}．{level.name}</strong><span>{'★'.repeat(progress[level.id]?.stars ?? 0)}{'☆'.repeat(3 - (progress[level.id]?.stars ?? 0))}</span></div>
             <small>挑戰 {progress[level.id]?.attempts ?? 0} 次{progress[level.id]?.best != null && ` · 最佳${level.metric === 'deviation' ? '側偏' : level.metric === 'peak' ? '高度' : '距離'} ${progress[level.id].best.toFixed(1)} 公尺`}</small>
             {[['completedAt', level.achievement], ['masteredAt', `${level.name}・三星成就`]].map(([key, name]) => <div className={`achievement-item ${progress[level.id]?.[key] ? 'earned' : ''}`} key={key}>
               <strong>{progress[level.id]?.[key] ? '🏅' : '🔒'} {name}</strong><small>{progress[level.id]?.[key] ? `取得於 ${new Date(progress[level.id][key]).toLocaleDateString('zh-TW')}` : key === 'completedAt' ? '首次過關後取得' : '取得 3 星後獲得'}</small>
             </div>)}
           </article>)}
+          </React.Fragment>)}
           <button className="menu-back" onClick={() => setPanelView('flight')}>返回{activeLevel ? '目前挑戰' : '自由實驗'}</button>
         </section>}
         <div hidden={panelView !== 'flight'}>
         {activeLevel && <section className="challenge-banner">
-          <strong>第 {activeLevel.id} 關 · {activeLevel.name}</strong><p>{activeLevel.environment}（固定）</p><p>{activeLevel.instruction}</p>
+          <strong>階段 {activeLevel.stage} · 第 {activeLevel.id} 關 · {activeLevel.name}</strong><p>{activeLevel.environment}（固定）</p><p>{activeLevel.instruction}</p>
           <ul>{activeLevel.thresholds.map((_, index) => <li key={index}>{starRule(activeLevel, index)}</li>)}</ul>
-          <details className="level-hint" open><summary>本關提示</summary><p>{activeLevel.id === 1 ? '從投擲角度與力道開始，一次只改一個條件。' : activeLevel.id === 2 ? '適度調整配重，讓重心靠近建議區，再比較距離。' : activeLevel.id === 3 ? '機型調整會改變升力與穩定度，先試著增加翼展。' : activeLevel.id === 4 ? '側風會推動落點，調整左右配重平衡並觀察側偏。' : '雨勢會增加軌跡擾動，從穩定配重和投擲角度著手。'}</p></details>
-          <small>最高 {'★'.repeat(progress[activeLevel.id]?.stars ?? 0)}{'☆'.repeat(3 - (progress[activeLevel.id]?.stars ?? 0))} · 螺旋槳停用</small>
+          <details className="level-hint" open><summary>本關提示</summary><p>{levelHint(activeLevel)}</p></details>
+          <small>最高 {'★'.repeat(progress[activeLevel.id]?.stars ?? 0)}{'☆'.repeat(3 - (progress[activeLevel.id]?.stars ?? 0))} · {STAGES[activeLevel.stage - 1].focus}</small>
           <button disabled={isAnimating} className="menu-back" onClick={enterFreeMode}>回到自由實驗</button>
         </section>}
         {activeMode === 'daily' && panelView === 'flight' && <section className="challenge-banner daily-banner">
@@ -1523,8 +1571,8 @@ function App() {
           {challengeResult.daily && <p>目標 {dailyChallenge.target} m · 今日共飛 {challengeResult.attempts} 次 · 最佳 {challengeResult.best ? `${challengeResult.best} 次` : '未完成'}</p>}
           {challengeResult.daily && challengeResult.success && <p className="success-note">你用 {challengeResult.attempts} 次完成今日挑戰！明天可再刷新紀錄。</p>}
           {(challengeResult.result.collision || (challengeResult.daily && !challengeResult.success) || (!challengeResult.daily && challengeResult.stars === 0)) && <div className="failure-explanation"><strong>失敗原因</strong><p>{challengeResult.result.collision ? '飛機碰到障礙物，模擬在碰撞點停止。' : challengeResult.daily ? `飛行距離 ${challengeResult.result.distance.toFixed(1)} 公尺，未達今日目標 ${dailyChallenge.target} 公尺。` : `飛行距離 ${challengeResult.result.distance.toFixed(1)} 公尺，未達本關最低目標。`}</p><p>{challengeResult.result.collision ? '觀察障礙物位置，嘗試調整仰角或讓飛機往另一側偏移。' : '先小幅增加力道或調整仰角，每次只改一項，再試飛比較。'}</p></div>}
-          {!challengeResult.daily && challengeResult.stars > 0 && <p>已取得「{activeLevel.achievement}」{challengeResult.stars === 3 ? '與本關三星成就' : ''}。{activeLevel.id < 5 ? '下一關已解鎖！' : '恭喜通過全部關卡！'}</p>}
-          {!challengeResult.daily && challengeResult.stars > 0 && activeLevel.id < 5 && <button disabled={isAnimating} onClick={() => startLevel(LEVELS[activeLevel.id])}>挑戰下一關</button>}
+          {!challengeResult.daily && challengeResult.stars > 0 && <p>已取得「{activeLevel.achievement}」{challengeResult.stars === 3 ? '與本關三星成就' : ''}。{activeLevel.id < LEVELS.length ? '下一關已解鎖！' : '恭喜通過全部 30 關！'}</p>}
+          {!challengeResult.daily && challengeResult.stars > 0 && activeLevel.id < LEVELS.length && <button disabled={isAnimating} onClick={() => startLevel(LEVELS[activeLevel.id])}>挑戰下一關</button>}
         </section>}
         <fieldset className="flight-controls" disabled={isAnimating}>
         <div className="panel-head">
@@ -1557,8 +1605,8 @@ function App() {
           <button className={settings.goal === 'high' ? 'active' : ''} onClick={() => update('goal', 'high')}><Sparkles size={16} />飛更高</button>
         </div>
 
-        <fieldset className="flight-controls" disabled={Boolean((activeLevel && activeLevel.id < 3) || activeMode === 'daily')}>
-        {activeLevel && activeLevel.id < 3 && <p className="section-note">機型固定，第 3 關起開放調整。</p>}
+        <fieldset className="flight-controls" disabled={Boolean((activeLevel && activeLevel.stage < 2) || activeMode === 'daily')}>
+        {activeLevel?.stage === 1 && <p className="section-note">基礎階段先使用標準機型；第 11 關起開放機身與機翼調整。</p>}
         <section className="airframe-section">
           <div className="section-heading-row"><h2><Ruler size={15} />機型調整</h2><button className="mini-reset" type="button" onClick={resetAirframe}>恢復預設</button></div>
           <p className="section-note">調整紙飛機尺寸與翼端折角；參數會同時影響 3D 模型、升力、阻力、穩定度與落點。</p>
@@ -1575,7 +1623,9 @@ function App() {
         </section>
 
         </fieldset>
-        <section hidden={Boolean(activeLevel)} className={`propeller-section ${settings.propeller.enabled ? '' : 'is-disabled'}`}>
+        <fieldset className="flight-controls" disabled={Boolean(activeLevel && activeLevel.stage < 3)}>
+        {activeLevel?.stage === 2 && <p className="section-note">進階推進階段才開放螺旋槳調整。</p>}
+        <section className={`propeller-section ${settings.propeller.enabled ? '' : 'is-disabled'}`}>
           <div className="section-heading-row"><h2><RotateCcw size={15} />螺旋槳調整</h2><button className="mini-reset" type="button" onClick={resetPropeller}>恢復預設</button></div>
           <p className="section-note">可選擇安裝位置、槳葉長度與重量；啟用後會同步影響模型、重心、阻力與前進推力。</p>
           <div className="propeller-toggle"><span>安裝螺旋槳</span><button type="button" className={settings.propeller.enabled ? 'selected' : ''} onClick={() => updatePropeller('enabled', !settings.propeller.enabled)}>{settings.propeller.enabled ? '已安裝' : '未安裝'}</button></div>
@@ -1595,9 +1645,9 @@ function App() {
           </div>
           <div className="propeller-status">{settings.propeller.enabled ? `目前裝在${({ nose: '機頭', left: '左翼', right: '右翼', tail: '機尾' })[settings.propeller.placement]}，重量 ${settings.propeller.weight.toFixed(1)} g` : '未安裝時不會改變原本的飛行結果'}</div>
         </section>
+        </fieldset>
 
-        <fieldset className="flight-controls" disabled={activeLevel?.id === 1}>
-        {activeLevel?.id === 1 && <p className="section-note">第一關配重固定，先試試角度與力道。</p>}
+        <fieldset className="flight-controls">
         <section>
           <h2>迴紋針配重</h2>
           <div className="placement-options" aria-label="迴紋針放置區域">
@@ -1611,8 +1661,8 @@ function App() {
           <div className="plane-map"><span className="nose">機頭</span><div
             className="mini-plane"
             role="slider"
-            tabIndex={isAnimating || activeLevel?.id === 1 ? -1 : 0}
-            aria-disabled={isAnimating || activeLevel?.id === 1}
+            tabIndex={isAnimating ? -1 : 0}
+            aria-disabled={isAnimating}
             aria-label="拖曳迴紋針位置"
             aria-valuemin={5}
             aria-valuemax={75}
